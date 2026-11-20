@@ -1,0 +1,73 @@
+# A Lexit deployment for NETWORK (deploy/.env): the Bitcoin node and the
+# hub, which reads LIQUID from an Esplora (no Liquid node); on regtest a
+# miner too (COMPOSE_PROFILES=regtest).
+#   deploy/build.sh && deploy/lexit.sh up
+# Data: deploy/state/<network>/.
+name: lexit-${NETWORK:?set NETWORK in deploy/.env}
+
+# Each service's log rotated, 10 MB a file and three kept
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+services:
+  bitcoind:
+    logging: *logging
+    image: lichen-bitcoind:${NETWORK}
+    command: ["bitcoind"]
+    volumes:
+      - ./state/${NETWORK}/bitcoind:/data
+    restart: unless-stopped
+    stop_grace_period: 1m
+    healthcheck:
+      test: ["CMD", "bitcoin-cli", "-datadir=/data", "getblockchaininfo"]
+      interval: 5s
+      retries: 60
+
+  miner:
+    logging: *logging
+    image: lichen-bitcoind:${NETWORK}
+    profiles: ["regtest"]
+    command: ["miner", "${MINE_EVERY:-5}"]
+    environment:
+      RPC_HOST: bitcoind
+    volumes:
+      - ./state/${NETWORK}/bitcoind:/data
+    depends_on:
+      bitcoind: { condition: service_healthy }
+    restart: unless-stopped
+
+  hub:
+    logging: *logging
+    image: ${LEXIT_IMAGE:-lexit:latest}
+    command: ["hub"]
+    environment:
+      NETWORK: ${NETWORK}
+      LIQUID: ${LIQUID:-testnet}
+      LIQUID_ESPLORA: ${LIQUID_ESPLORA:-}
+      STATEMENT: ${STATEMENT:-hub-proves-mock}
+      RESERVE_PPM: ${RESERVE_PPM:-20000}
+      DEPOSIT_PPM_YEAR: ${DEPOSIT_PPM_YEAR:-30000}
+      LIQUIDITY_PPM_YEAR: ${LIQUIDITY_PPM_YEAR:-50000}
+      FLAT_FEE: ${FLAT_FEE:-0}
+      MAX_LIQUIDITY: ${MAX_LIQUIDITY:-10000000}
+      FLOAT_WARN: ${FLOAT_WARN:-1000000}
+      DURATION: ${DURATION:-}
+      HOSTILE: ${HOSTILE:-}
+      REFUSE_FOLDS: ${REFUSE_FOLDS:-}
+      # the wrap of the hub's statement in Groth16 (STATEMENT=hub-proves):
+      # its working files, at the same path on the host and here, for RISC
+      # Zero's prover image on the host's Docker
+      RISC0_WORK_DIR: ${R0WORK:?set R0WORK, an absolute host path (deploy/lexit.sh sets deploy/state/<network>/r0work)}
+    volumes:
+      - ./state/${NETWORK}/hub:/hub
+      - ./state/${NETWORK}/bitcoind:/bitcoind:ro
+      - ${R0WORK}:${R0WORK}
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "${HUB_PORT:-18330}:18330"
+    depends_on:
+      bitcoind: { condition: service_healthy }
+    restart: unless-stopped
