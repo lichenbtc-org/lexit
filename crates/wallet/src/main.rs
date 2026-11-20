@@ -65,6 +65,10 @@ enum Cmd {
         payout: Option<String>,
         #[arg(long)]
         resume: Option<u32>,
+        /// Pay the deposit from the node's wallet (`--rpc-url`,
+        /// `--chain-wallet`), rather than printing where to pay it.
+        #[arg(long)]
+        pay: bool,
     },
     /// The contracts, their mints and their return addresses.
     Contracts,
@@ -163,7 +167,7 @@ fn main() -> Result<()> {
     w.progress = Some(std::sync::Arc::new(|m: String| println!("{m}")));
     match a.cmd {
         Cmd::Init => unreachable!(),
-        Cmd::Open { deposit, liquidity, reserve, ref payout, resume } => {
+        Cmd::Open { deposit, liquidity, reserve, ref payout, resume, pay: pay_from_node } => {
             let chain = chain(&a)?;
             let ask = lexit_wallet::Ask { deposit, liquidity, reserve };
             let q = ask.quote(&lexit_wallet::hub_info(&a.hub)?)?;
@@ -180,8 +184,14 @@ fn main() -> Result<()> {
                             spk
                         }
                     };
+                    anyhow::ensure!(!pay_from_node || a.rpc_url.is_some(), "--pay pays from a node's wallet: give --rpc-url");
                     let pay = |addr: &bitcoin::Address, amount: bitcoin::Amount| -> Result<()> {
-                        println!("pay {} sats to {addr}\n(waiting for it to confirm)", amount.to_sat());
+                        if pay_from_node {
+                            let txid = chain.pay(&addr.script_pubkey(), amount)?;
+                            println!("paid {} sats to {addr}: {txid}\n(waiting for it to confirm)", amount.to_sat());
+                        } else {
+                            println!("pay {} sats to {addr}\n(waiting for it to confirm)", amount.to_sat());
+                        }
                         Ok(())
                     };
                     w.open_contract(&a.hub, &chain, &statement(&a)?, ask, payout, &pay)?
