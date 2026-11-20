@@ -137,8 +137,6 @@ pub struct ContractView {
     pub mint_claimed: bool,
     /// L-BTC returned to it, not yet paid back in BTC (sats).
     pub returned: Option<u64>,
-    /// Its return address on Liquid.
-    pub return_address: String,
     /// A dispute in progress: its `b`, in units.
     pub disputing: Option<u32>,
     /// A closed contract's fee budget left on chain (sats): 0 once swept;
@@ -532,7 +530,6 @@ impl App {
                     closed: h.closed.map(|x| x.to_string()),
                     mint_claimed: w.l2.mints.iter().filter(|m| m.cid == cid).all(|m| m.swept.is_some()),
                     returned: (returned > 0 && h.closed.is_none()).then_some(returned),
-                    return_address: lexit_wallet::return_address(w, cid).map(|a| a.to_string()).unwrap_or_default(),
                     // a claim made (a withdrawal's, kept after its fold too):
                     // a dispute only while the contract is open
                     disputing: h.exit.as_ref().filter(|_| h.closed.is_none()).and_then(|e| e.get("b")).and_then(|b| b.as_u64()).map(|b| b as u32),

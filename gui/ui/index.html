@@ -687,7 +687,6 @@ function render() {
     if (c.disputing != null && !c.closed) acts += `<button class="btn small mt" data-exit="${c.cid}">Exit on Bitcoin</button><div class="note">the hub didn't pay your exit: your claim goes on chain, and the hub pays it unless it proves it false</div>`;
     if (!c.closed && !c.defaulted && over) acts += `<button class="btn small sec mt" data-d="${c.cid}">Post the default (your reserve back)</button>`;
     if (!c.mint_claimed) acts += `<button class="btn small sec mt" data-m="${c.cid}">Sweep its L-BTC into your wallet</button>`;
-    if (!c.closed && c.return_address) acts += `<details id="ra-${c.cid}" class="mt"><summary>Its return address on Liquid</summary><div class="note mt">Paying here from another wallet counts for the contract only once recorded (the command line's record-return); this app returns from your wallet itself.</div><div class="mono mt">${esc(c.return_address)}</div></details>`;
     if ((c.closed || c.defaulted) && c.disputing == null && c.budget !== 0) acts += `<button class="btn small sec mt" data-f="${c.cid}">Sweep the fee budget${c.budget ? ` (${sats(c.budget)} sats)` : ''}</button>`;
     return h + acts + '</div>';
   }).join(''));
