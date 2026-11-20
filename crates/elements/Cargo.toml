@@ -1,0 +1,16 @@
+[package]
+name = "liquid-lichen-elements"
+description = "What the hub's statement reads of Liquid: dynafed headers and their block signatures, transactions and their confidential outputs, Merkle paths, Pedersen commitments opened"
+# self-contained (not inherited from the workspace): the statement guest
+# builds it alone
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+sha2 = { version = "0.10", default-features = false }
+k256 = { version = "0.13", default-features = false, features = ["alloc", "ecdsa", "expose-field"] }
+
+[dev-dependencies]
+elements = "0.27"
+hex = "0.4"

@@ -1,0 +1,30 @@
+[package]
+name = "liquid-lichen-wallet"
+description = "liquid-lichen's wallet: guaranteed exits from L-BTC, on a lichen wallet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "liquid-lichen"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+bitcoin.workspace = true
+clap.workspace = true
+elements.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+ureq.workspace = true
+liquid-lichen-statement.workspace = true
+liquid-lichen-proto.workspace = true
+lichen-contract.workspace = true
+lichen-chain.workspace = true
+lichen-proto.workspace = true
+lichen-babe.workspace = true
+lichen-wallet.workspace = true
+lichen-btc.workspace = true
+lichen-wots.workspace = true

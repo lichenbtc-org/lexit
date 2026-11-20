@@ -1,0 +1,295 @@
+//! Liquid as both sides see it: a view of the chain ([`LiquidView`]: the
+//! hub's elementsd over RPC, [`Rpc`]; the user's Esplora, [`Esplora`]),
+//! the network ([`LiquidNet`]), and the keys and addresses a contract
+//! uses on Liquid: the mint's ([`mint_key`]) and the returns'
+//! ([`return_address`]).
+
+use anyhow::{bail, ensure, Context, Result};
+use bitcoin::secp256k1::{PublicKey, Secp256k1, XOnlyPublicKey};
+use elements::AddressParams;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+use lichen_proto::Hash;
+
+/// A Liquid network: what a hub's deployment names, and both sides check.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LiquidNet {
+    /// Liquid itself (`liquidv1`).
+    Liquid,
+    /// Blockstream's Liquid testnet (`liquidtestnet`).
+    Testnet,
+    /// A local Elements chain (`elementsregtest`), its block signing
+    /// script our own.
+    Regtest,
+}
+
+impl LiquidNet {
+    pub fn address_params(self) -> &'static AddressParams {
+        match self {
+            LiquidNet::Liquid => &AddressParams::LIQUID,
+            LiquidNet::Testnet => &AddressParams::LIQUID_TESTNET,
+            LiquidNet::Regtest => &AddressParams::ELEMENTS,
+        }
+    }
+    /// Its policy asset (L-BTC), if fixed: a regtest chain's is its own.
+    pub fn policy_asset(self) -> Option<Hash> {
+        match self {
+            LiquidNet::Liquid => Some(liquid_lichen_elements::LBTC),
+            LiquidNet::Testnet => internal("144c654344aa716d6f3abcc1ca90e5641e4e2a7f633bc09fe3baf64585819a49").ok(),
+            LiquidNet::Regtest => None,
+        }
+    }
+    /// Its public Esplora, if any.
+    pub fn default_esplora(self) -> Option<&'static str> {
+        match self {
+            LiquidNet::Liquid => Some("https://blockstream.info/liquid/api"),
+            LiquidNet::Testnet => Some("https://blockstream.info/liquidtestnet/api"),
+            LiquidNet::Regtest => None,
+        }
+    }
+    /// The seconds the statement allows between a Liquid block's time and
+    /// `request`'s block time: Bitcoin's block times run up to two hours
+    /// ahead and about an hour behind; regtest's are the machine's.
+    pub fn drift(self) -> u32 {
+        match self {
+            LiquidNet::Regtest => 600,
+            _ => 3 * 3600,
+        }
+    }
+}
+
+/// What both sides read of Liquid.
+pub trait LiquidView {
+    /// The tip's height.
+    fn height(&self) -> Result<u32>;
+    /// The block hash at `height` (displayed order, hex).
+    fn block_hash(&self, height: u32) -> Result<String>;
+    /// A block's header, serialized with its witness.
+    fn header(&self, hash: &str) -> Result<Vec<u8>>;
+    /// A block's txids, in order (internal byte order).
+    fn txids(&self, hash: &str) -> Result<Vec<Hash>>;
+    /// A transaction, serialized.
+    fn tx(&self, txid: &Hash) -> Result<Vec<u8>>;
+}
+
+fn display(h: &Hash) -> String {
+    let mut b = *h;
+    b.reverse();
+    hex::encode(b)
+}
+
+fn internal(s: &str) -> Result<Hash> {
+    let mut h: Hash = hex::decode(s)?.try_into().map_err(|_| anyhow::anyhow!("a hash of 32 bytes"))?;
+    h.reverse();
+    Ok(h)
+}
+
+/// elementsd over JSON-RPC, by its cookie file (the hub's node).
+pub struct Rpc {
+    pub url: String,
+    pub cookie: std::path::PathBuf,
+    /// The node's wallet that pays the mints and holds the returns.
+    pub wallet: String,
+}
+
+impl Rpc {
+    pub fn call(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
+        self.call_at(&self.url, method, params)
+    }
+    /// A call to the node's wallet.
+    pub fn wallet_call(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
+        self.call_at(&format!("{}/wallet/{}", self.url.trim_end_matches('/'), self.wallet), method, params)
+    }
+    fn call_at(&self, url: &str, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
+        let auth = std::fs::read_to_string(&self.cookie).with_context(|| format!("elementsd's cookie {}", self.cookie.display()))?;
+        let body = serde_json::json!({ "jsonrpc": "1.0", "id": "liquid-lichen", "method": method, "params": params });
+        let r = ureq::post(url).set("Authorization", &format!("Basic {}", base64(auth.trim().as_bytes()))).send_json(body);
+        let v: serde_json::Value = match r {
+            Ok(r) => r.into_json()?,
+            Err(ureq::Error::Status(_, r)) => r.into_json()?,
+            Err(e) => return Err(e).with_context(|| format!("elementsd at {url}")),
+        };
+        if !v["error"].is_null() {
+            bail!("elementsd {method}: {}", v["error"]);
+        }
+        Ok(v["result"].clone())
+    }
+}
+
+/// Standard base64, for the RPC's basic authentication.
+fn base64(b: &[u8]) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut s = String::new();
+    for c in b.chunks(3) {
+        let n = (u32::from(c[0]) << 16) | (u32::from(*c.get(1).unwrap_or(&0)) << 8) | u32::from(*c.get(2).unwrap_or(&0));
+        for i in 0..4 {
+            if i <= c.len() {
+                s.push(A[(n >> (18 - 6 * i)) as usize & 63] as char);
+            } else {
+                s.push('=');
+            }
+        }
+    }
+    s
+}
+
+impl LiquidView for Rpc {
+    fn height(&self) -> Result<u32> {
+        Ok(self.call("getblockcount", serde_json::json!([]))?.as_u64().context("a height")? as u32)
+    }
+    fn block_hash(&self, height: u32) -> Result<String> {
+        Ok(self.call("getblockhash", serde_json::json!([height]))?.as_str().context("a block hash")?.to_string())
+    }
+    fn header(&self, hash: &str) -> Result<Vec<u8>> {
+        Ok(hex::decode(self.call("getblockheader", serde_json::json!([hash, false]))?.as_str().context("a header's hex")?)?)
+    }
+    fn txids(&self, hash: &str) -> Result<Vec<Hash>> {
+        let b = self.call("getblock", serde_json::json!([hash, 1]))?;
+        b["tx"].as_array().context("a block's txids")?.iter().map(|t| internal(t.as_str().context("a txid")?)).collect()
+    }
+    fn tx(&self, txid: &Hash) -> Result<Vec<u8>> {
+        Ok(hex::decode(self.call("getrawtransaction", serde_json::json!([display(txid)]))?.as_str().context("a transaction's hex")?)?)
+    }
+}
+
+/// A Liquid Esplora (the user's view: no node).
+pub struct Esplora {
+    pub url: String,
+}
+
+impl Esplora {
+    fn get(&self, path: &str) -> Result<String> {
+        let url = format!("{}/{path}", self.url.trim_end_matches('/'));
+        Ok(ureq::get(&url).timeout(std::time::Duration::from_secs(30)).call().with_context(|| format!("GET {url}"))?.into_string()?)
+    }
+    /// Broadcast a transaction (hex): its txid.
+    pub fn broadcast(&self, tx: &[u8]) -> Result<String> {
+        let url = format!("{}/tx", self.url.trim_end_matches('/'));
+        Ok(ureq::post(&url).send_string(&hex::encode(tx)).with_context(|| format!("POST {url}"))?.into_string()?)
+    }
+}
+
+impl LiquidView for Esplora {
+    fn height(&self) -> Result<u32> {
+        Ok(self.get("blocks/tip/height")?.trim().parse()?)
+    }
+    fn block_hash(&self, height: u32) -> Result<String> {
+        Ok(self.get(&format!("block-height/{height}"))?.trim().to_string())
+    }
+    fn header(&self, hash: &str) -> Result<Vec<u8>> {
+        Ok(hex::decode(self.get(&format!("block/{hash}/header"))?.trim())?)
+    }
+    fn txids(&self, hash: &str) -> Result<Vec<Hash>> {
+        let ids: Vec<String> = serde_json::from_str(&self.get(&format!("block/{hash}/txids"))?)?;
+        ids.iter().map(|t| internal(t)).collect()
+    }
+    fn tx(&self, txid: &Hash) -> Result<Vec<u8>> {
+        Ok(hex::decode(self.get(&format!("tx/{}/hex", display(txid)))?.trim())?)
+    }
+}
+
+/// A block, as a ground shows it, at `height`.
+pub fn block_at(view: &dyn LiquidView, height: u32) -> Result<(Vec<u8>, Vec<Hash>)> {
+    let hash = view.block_hash(height)?;
+    Ok((view.header(&hash)?, view.txids(&hash)?))
+}
+
+/// The key of a mint behind the funding's adaptor point `T`, for the
+/// user's L2 address `A` (x-only): `P = H(A ‖ T)·A + T`, x-only. She can
+/// spend it once the funding shows `t`; the hub, never (its refund leaf
+/// aside). Her secret: `H(A ‖ T)·a + t`, negated if `P`'s y is odd.
+pub fn mint_key(l2_address: &Hash, mint_point: &PublicKey) -> Result<XOnlyPublicKey> {
+    let secp = Secp256k1::verification_only();
+    let a = XOnlyPublicKey::from_slice(l2_address).context("the L2 address isn't a key")?.public_key(bitcoin::secp256k1::Parity::Even);
+    let h: [u8; 32] = Sha256::new().chain_update(b"liquid-lichen/mint").chain_update(l2_address).chain_update(mint_point.serialize()).finalize().into();
+    let ha = a.mul_tweak(&secp, &bitcoin::secp256k1::Scalar::from_be_bytes(h).context("a tweak out of range")?)?;
+    Ok(ha.combine(mint_point)?.x_only_public_key().0)
+}
+
+/// The secret of the mint key ([`mint_key`]), from the user's L2 key `a`
+/// and the adaptor secret `t` the funding shows: `H(A ‖ T)·a + t`, `a`
+/// negated if `A`'s y is odd. (A spend negates it again if `P`'s is.)
+pub fn mint_secret(a: &bitcoin::secp256k1::Keypair, t: &bitcoin::secp256k1::SecretKey) -> Result<bitcoin::secp256k1::SecretKey> {
+    let secp = Secp256k1::signing_only();
+    let (l2, parity) = a.x_only_public_key();
+    let mint_point = PublicKey::from_secret_key(&secp, t);
+    let h: [u8; 32] = Sha256::new().chain_update(b"liquid-lichen/mint").chain_update(l2.serialize()).chain_update(mint_point.serialize()).finalize().into();
+    let mut sk = a.secret_key();
+    if parity == bitcoin::secp256k1::Parity::Odd {
+        sk = sk.negate();
+    }
+    Ok(sk.mul_tweak(&bitcoin::secp256k1::Scalar::from_be_bytes(h)?)?.add_tweak(&bitcoin::secp256k1::Scalar::from(*t))?)
+}
+
+/// A key-path-only Taproot address on `net` for the output key `key`,
+/// blinded to `blinder`.
+pub fn p2tr_address(key: &XOnlyPublicKey, blinder: Option<&PublicKey>, net: LiquidNet) -> Result<elements::Address> {
+    let key = elements::schnorr::XOnlyPublicKey::from_slice(&key.serialize())?;
+    let tweaked = elements::schnorr::TweakedPublicKey::new(key);
+    let blinder = blinder.map(|b| elements::secp256k1_zkp::PublicKey::from_slice(&b.serialize())).transpose()?;
+    Ok(elements::Address::p2tr_tweaked(tweaked, blinder, net.address_params()))
+}
+
+/// The address of contract `c`'s returns (`D` its terms' hash): its
+/// return key ([`liquid_lichen_statement::return_key`]), blinded to the
+/// hub's blinding key, so the hub unblinds them.
+pub fn return_address(hub: &Hash, d: &Hash, c: u32, hub_blinding: &PublicKey, net: LiquidNet) -> Result<elements::Address> {
+    let k = liquid_lichen_statement::return_key(hub, d, c).context("the hub's key isn't a key")?;
+    p2tr_address(&XOnlyPublicKey::from_slice(&k)?, Some(hub_blinding), net)
+}
+
+/// The block signing script of the tip's block: what a hub's terms pin,
+/// and the user checks against her own view.
+pub fn signblockscript(view: &dyn LiquidView) -> Result<Vec<u8>> {
+    let hash = view.block_hash(view.height()?)?;
+    let b = view.header(&hash)?;
+    let h = liquid_lichen_elements::header::parse(&b).context("the tip's header isn't dynafed")?;
+    let s = h.current.signblockscript().context("the tip's header names no signing script")?;
+    ensure!(s.len() == 34 && s[..2] == [0, 0x20], "the block signing script isn't P2WSH");
+    Ok(s.to_vec())
+}
+
+/// An asset's generator (secp256k1-zkp's, serialized): what a contract's
+/// terms pin, so the statement never hashes to the curve.
+pub fn generator(asset: &Hash) -> [u8; 33] {
+    let secp = elements::secp256k1_zkp::Secp256k1::new();
+    elements::secp256k1_zkp::Generator::new_unblinded(&secp, elements::secp256k1_zkp::Tag::from(*asset)).serialize()
+}
+
+/// The chain's policy asset, as the node names it (`getsidechaininfo`).
+pub fn node_policy_asset(rpc: &Rpc) -> Result<Hash> {
+    internal(rpc.call("getsidechaininfo", serde_json::json!([]))?["pegged_asset"].as_str().context("the node's pegged asset")?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_mint_secret_is_the_mint_keys() {
+        let secp = Secp256k1::new();
+        for n in 1u8..6 {
+            let a = bitcoin::secp256k1::Keypair::from_seckey_slice(&secp, &[n; 32]).unwrap();
+            let t = bitcoin::secp256k1::SecretKey::from_slice(&[n + 40; 32]).unwrap();
+            let p = mint_key(&a.x_only_public_key().0.serialize(), &PublicKey::from_secret_key(&secp, &t)).unwrap();
+            let s = mint_secret(&a, &t).unwrap();
+            assert_eq!(s.x_only_public_key(&secp).0, p);
+        }
+    }
+
+    #[test]
+    fn regtest_and_liquid_addresses_differ_and_carry_the_blinder() {
+        let secp = Secp256k1::new();
+        let k = bitcoin::secp256k1::SecretKey::from_slice(&[9; 32]).unwrap();
+        let b = PublicKey::from_secret_key(&secp, &bitcoin::secp256k1::SecretKey::from_slice(&[8; 32]).unwrap());
+        let x = k.x_only_public_key(&secp).0;
+        let l = p2tr_address(&x, Some(&b), LiquidNet::Liquid).unwrap();
+        let r = p2tr_address(&x, Some(&b), LiquidNet::Regtest).unwrap();
+        assert!(l.is_blinded() && r.is_blinded());
+        assert_ne!(l.to_string(), r.to_string());
+        assert_eq!(l.script_pubkey(), r.script_pubkey());
+        assert_eq!(l.script_pubkey().as_bytes()[2..], x.serialize());
+    }
+}
