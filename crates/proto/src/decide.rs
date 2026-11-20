@@ -2,7 +2,7 @@
 //! user's, before she posts): the ground it is false on, or that it holds.
 
 use anyhow::Result;
-use liquid_lichen_statement::{not_a_return, Block, Claim, Ground, OutPoint, Terms};
+use lexit_statement::{not_a_return, Block, Claim, Ground, OutPoint, Terms};
 
 use crate::liquid::{block_at, LiquidView};
 
@@ -28,7 +28,7 @@ pub fn decide(view: &dyn LiquidView, t: &Terms, c: u32, deposit: &OutPoint, b: u
     for (w, cite) in claim.cited.iter().enumerate() {
         if cite.height > tip {
             let header = view.header(&view.block_hash(tip)?)?;
-            let late = liquid_lichen_elements::header::parse(&header).is_some_and(|h| u64::from(h.time) > u64::from(req_time) + u64::from(t.drift));
+            let late = lexit_elements::header::parse(&header).is_some_and(|h| u64::from(h.time) > u64::from(req_time) + u64::from(t.drift));
             if late {
                 return Ok(Found::False(Ground::TooHigh { which: w as u8, header }, format!("it cites block {}, beyond Liquid's tip ({tip}) at its time", cite.height)));
             }

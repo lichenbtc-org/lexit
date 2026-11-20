@@ -3,9 +3,9 @@
 //! generators and commitments (by rust-elements).
 
 use elements::secp256k1_zkp::{Generator, PedersenCommitment, Secp256k1, Tweak};
-use liquid_lichen_elements::commit::{blinded_generator, opens, value_commitment, LBTC_GENERATOR};
-use liquid_lichen_elements::tx::{Asset, Value};
-use liquid_lichen_elements::{header, merkle, tx, LBTC};
+use lexit_elements::commit::{blinded_generator, opens, value_commitment, LBTC_GENERATOR};
+use lexit_elements::tx::{Asset, Value};
+use lexit_elements::{header, merkle, tx, LBTC};
 
 fn data(name: &str) -> Vec<u8> {
     hex::decode(std::fs::read_to_string(format!("{}/tests/data/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap().trim()).unwrap()

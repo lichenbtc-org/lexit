@@ -32,13 +32,13 @@ elf)
 pack)
     [ -f "r0/guests/$g.elf" ] || { echo "no r0/guests/$g.elf: build it first (elf $g)" >&2; exit 1; }
     # the prover image without a guest to check yet
-    docker build --build-arg NO_ID_CHECK=1 -f r0/Dockerfile -t liquid-lichen-r0 .
-    docker run --rm -i --entrypoint sh liquid-lichen-r0 -c 'cat > /tmp/g.elf && /src/r0/target/release/liquid-lichen-r0 pack /tmp/g.elf /tmp/g.bin >&2 && cat /tmp/g.bin' < "r0/guests/$g.elf" > "r0/guests/$g.bin"
-    docker run --rm -i --entrypoint sh liquid-lichen-r0 -c 'cat > /tmp/g.bin && /src/r0/target/release/liquid-lichen-r0 pack-id /tmp/g.bin' < "r0/guests/$g.bin" > "r0/guests/$g.id"
+    docker build --build-arg NO_ID_CHECK=1 -f r0/Dockerfile -t lexit-r0 .
+    docker run --rm -i --entrypoint sh lexit-r0 -c 'cat > /tmp/g.elf && /src/r0/target/release/lexit-r0 pack /tmp/g.elf /tmp/g.bin >&2 && cat /tmp/g.bin' < "r0/guests/$g.elf" > "r0/guests/$g.bin"
+    docker run --rm -i --entrypoint sh lexit-r0 -c 'cat > /tmp/g.bin && /src/r0/target/release/lexit-r0 pack-id /tmp/g.bin' < "r0/guests/$g.bin" > "r0/guests/$g.id"
     rm "r0/guests/$g.elf"
     cat "r0/guests/$g.id"
     shasum -a 256 "r0/guests/$g.bin"
-    docker build -f r0/Dockerfile -t liquid-lichen-r0 .
+    docker build -f r0/Dockerfile -t lexit-r0 .
     ;;
 *)
     echo "usage: $0 elf|pack [hp]" >&2

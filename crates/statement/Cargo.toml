@@ -1,5 +1,5 @@
 [package]
-name = "liquid-lichen-statement"
+name = "lexit-statement"
 description = "The hub's statement: that a user's exit claim, citing her returns of L-BTC on Liquid, is false"
 # self-contained (not inherited from the workspace): the statement guest
 # builds it alone
@@ -8,6 +8,6 @@ edition = "2021"
 license = "MIT"
 
 [dependencies]
-liquid-lichen-elements = { path = "../elements" }
+lexit-elements = { path = "../elements" }
 sha2 = { version = "0.10", default-features = false }
 k256 = { version = "0.13", default-features = false, features = ["alloc", "arithmetic"] }

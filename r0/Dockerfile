@@ -1,4 +1,4 @@
-# liquid-lichen-r0, the guests' prover, on Linux (Apple silicon: arm64, native).
+# lexit-r0, the guests' prover, on Linux (Apple silicon: arm64, native).
 # Context: lichen's root. Run by r0/spend-prover.sh and chain-prover.sh.
 # A Groth16 wrap (x86_64) runs RISC Zero's prover image as a sibling
 # container, through the host's Docker: hence the docker CLI (static, a
@@ -10,10 +10,10 @@ COPY crates/elements crates/elements
 COPY crates/statement crates/statement
 COPY r0/Cargo.toml r0/Cargo.lock r0/
 COPY r0/host r0/host
-RUN cargo build --release --locked --manifest-path r0/Cargo.toml -p liquid-lichen-r0
+RUN cargo build --release --locked --manifest-path r0/Cargo.toml -p lexit-r0
 COPY --from=docker:28.5.1-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY r0/guests r0/guests
 # the committed image id must be the committed binary's
 ARG NO_ID_CHECK=
-RUN [ -n "$NO_ID_CHECK" ] || /src/r0/target/release/liquid-lichen-r0 check-id
-ENTRYPOINT ["/src/r0/target/release/liquid-lichen-r0"]
+RUN [ -n "$NO_ID_CHECK" ] || /src/r0/target/release/lexit-r0 check-id
+ENTRYPOINT ["/src/r0/target/release/lexit-r0"]

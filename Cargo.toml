@@ -4,7 +4,7 @@ exclude = ["r0"]
 members = ["crates/elements", "crates/statement", "crates/proto", "crates/hub", "crates/wallet"]
 
 [workspace.package]
-# liquid-lichen's own (its crates' versions are in the guest's ELF, so its
+# Lexit's own (its crates' versions are in the guest's ELF, so its
 # image id: a change here is a new deployment)
 version = "0.1.0"
 edition = "2021"
@@ -17,7 +17,7 @@ bitcoincore-rpc = "0.19"
 clap = { version = "4", features = ["derive"] }
 # rust-elements: Liquid's transactions, addresses (blech32), confidential
 # outputs (host side only: the guest reads Liquid with
-# liquid-lichen-elements)
+# lexit-elements)
 elements = "0.27"
 getrandom = "0.2"
 hex = "0.4"
@@ -27,11 +27,11 @@ serde_json = "1"
 sha2 = { version = "0.10", default-features = false }
 tiny_http = "0.12"
 ureq = { version = "2", features = ["json"] }
-liquid-lichen-elements = { path = "crates/elements" }
-liquid-lichen-statement = { path = "crates/statement" }
-liquid-lichen-proto = { path = "crates/proto" }
-liquid-lichen-hub = { path = "crates/hub" }
-liquid-lichen-wallet = { path = "crates/wallet" }
+lexit-elements = { path = "crates/elements" }
+lexit-statement = { path = "crates/statement" }
+lexit-proto = { path = "crates/proto" }
+lexit-hub = { path = "crates/hub" }
+lexit-wallet = { path = "crates/wallet" }
 # lichen, the base (lichenbtc-org/lichen), at the rev glichen and vlichen
 # take (its crates are the same at master, 6c54fa1)
 lichen-contract = { git = "https://github.com/lichenbtc-org/lichen", rev = "e6532ca6435ca6ea4701ed4faac92a7011ec44bf" }

@@ -8,7 +8,7 @@ use bitcoin::consensus::serialize;
 use bitcoin::hashes::Hash as _;
 use bitcoin::{Transaction, Txid, Witness};
 use lichen_chain::Chain;
-use liquid_lichen_statement::btc::sha256d;
+use lexit_statement::btc::sha256d;
 
 /// The Merkle path of the leaf at `index` among `leaves` (internal
 /// order), siblings from the leaves up; a level's odd last node pairs
@@ -36,7 +36,7 @@ pub fn bare(t: &Transaction) -> Vec<u8> {
 
 /// `request` (`request_id`) in its block, with its witness, and the
 /// funding transaction `funding` it spends: what the statements take.
-pub fn request_proof(chain: &Chain, funding: &Transaction, request_id: &Txid) -> Result<liquid_lichen_statement::Request> {
+pub fn request_proof(chain: &Chain, funding: &Transaction, request_id: &Txid) -> Result<lexit_statement::Request> {
     let request = chain.get_tx(request_id).context("the request")?;
     let block = chain.block_of(request_id)?.context("the request is not in a block")?;
     let header = chain.header(&block)?;
@@ -50,7 +50,7 @@ pub fn request_proof(chain: &Chain, funding: &Transaction, request_id: &Txid) ->
     }
     let ids: Vec<[u8; 32]> = txids.iter().map(|t| t.to_byte_array()).collect();
     let reserved: [u8; 32] = coinbase.input[0].witness.nth(0).and_then(|w| w.try_into().ok()).unwrap_or([0; 32]);
-    Ok(liquid_lichen_statement::Request {
+    Ok(lexit_statement::Request {
         funding: bare(funding),
         tx: serialize(&request),
         header,

@@ -1,4 +1,4 @@
-//! `liquid-lichen`: the user's wallet (a lichen wallet whose contracts are
+//! `lexit`: the user's wallet (a lichen wallet whose contracts are
 //! guaranteed exits from L-BTC).
 
 use std::path::PathBuf;
@@ -6,10 +6,10 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use lichen_proto::Statement;
-use liquid_lichen_wallet::{LiquidLichenWallet as Wallet, LiquidWallet, Return};
+use lexit_wallet::{LexitWallet as Wallet, LiquidWallet, Return};
 
 #[derive(Parser)]
-#[command(about = "A liquid-lichen wallet")]
+#[command(about = "A Lexit wallet")]
 struct Args {
     /// The Bitcoin network: `regtest`, `mutinynet`, `signet` or `testnet4`.
     #[arg(long, default_value = "regtest")]
@@ -100,7 +100,7 @@ enum Cmd {
 }
 
 fn statement(a: &Args) -> Result<Statement> {
-    Statement::parse(&a.statement, lichen_babe::statement::image_id(liquid_lichen_proto::HP_IMAGE_ID))
+    Statement::parse(&a.statement, lichen_babe::statement::image_id(lexit_proto::HP_IMAGE_ID))
 }
 
 fn chain(a: &Args) -> Result<lichen_chain::Chain> {
@@ -118,7 +118,7 @@ fn chain(a: &Args) -> Result<lichen_chain::Chain> {
 fn main() -> Result<()> {
     let a = Args::parse();
     if let Cmd::Init = a.cmd {
-        let mut l2 = <LiquidWallet as lichen_wallet::WalletL2>::create(&liquid_lichen_wallet::hub_info(&a.hub)?)?;
+        let mut l2 = <LiquidWallet as lichen_wallet::WalletL2>::create(&lexit_wallet::hub_info(&a.hub)?)?;
         if let Some(e) = &a.esplora_liquid {
             l2.esplora = e.clone();
         }
@@ -135,8 +135,8 @@ fn main() -> Result<()> {
         Cmd::Init => unreachable!(),
         Cmd::Open { deposit, liquidity, reserve, ref payout, resume } => {
             let chain = chain(&a)?;
-            let ask = liquid_lichen_wallet::Ask { deposit, liquidity, reserve };
-            let q = ask.quote(&liquid_lichen_wallet::hub_info(&a.hub)?)?;
+            let ask = lexit_wallet::Ask { deposit, liquidity, reserve };
+            let q = ask.quote(&lexit_wallet::hub_info(&a.hub)?)?;
             println!("the hub's fee for {liquidity} sats of liquidity: {} sats; you'll be paid {} sats of L-BTC, with a cap of {} sats", q.fee, q.minted, q.cap);
             let h = match resume {
                 Some(cid) => w.resume_open(&a.hub, &chain, &statement(&a)?, ask, cid)?,
@@ -159,7 +159,7 @@ fn main() -> Result<()> {
             };
             let t = &h.record.terms;
             println!("contract {}: deposit {} sats ({} of L-BTC minted), cap {} sats, T_close {}; funding {}", h.record.cid(), t.deposit, h.record.minted(), t.v_max().to_sat(), t.t_close, h.record.funding.txid);
-            println!("its return address on Liquid: {}", liquid_lichen_wallet::return_address(&w, h.record.cid())?);
+            println!("its return address on Liquid: {}", lexit_wallet::return_address(&w, h.record.cid())?);
         }
         Cmd::Contracts => {
             for h in &w.contracts {
@@ -167,7 +167,7 @@ fn main() -> Result<()> {
                 let state = h.closed.map_or("open".to_string(), |x| format!("closed by {x}"));
                 println!("contract {}: deposit {} sats, cap {} sats, T_close {}; {state}", h.record.cid(), t.deposit, t.v_max().to_sat(), t.t_close);
                 println!("  funding     {}", h.record.funding);
-                if let Ok(addr) = liquid_lichen_wallet::return_address(&w, h.record.cid()) {
+                if let Ok(addr) = lexit_wallet::return_address(&w, h.record.cid()) {
                     println!("  returns to  {addr}");
                 }
                 for m in w.l2.mints.iter().filter(|m| m.cid == h.record.cid()) {
@@ -178,7 +178,7 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Cmd::ReturnAddress { contract } => println!("{}", liquid_lichen_wallet::return_address(&w, contract)?),
+        Cmd::ReturnAddress { contract } => println!("{}", lexit_wallet::return_address(&w, contract)?),
         Cmd::RecordReturn { contract, ref txid, vout, value, ref r_a, ref r_v } => {
             w.l2.record_return(Return { cid: contract, txid: txid.clone(), vout, value, r_a: r_a.clone(), r_v: r_v.clone() })?;
             w.save()?;
@@ -191,7 +191,7 @@ fn main() -> Result<()> {
                 let (outcome, swept) = w.exit(&chain(&a)?, &statement(&a)?, contract)?;
                 println!("{outcome:?}; swept {swept:?}");
             }
-            Err(e) => return Err(e.context(format!("the hub didn't fold: `liquid-lichen exit {contract}` claims your returns on Bitcoin"))),
+            Err(e) => return Err(e.context(format!("the hub didn't fold: `lexit exit {contract}` claims your returns on Bitcoin"))),
         },
         Cmd::Exit { contract } => {
             let (outcome, swept) = w.exit(&chain(&a)?, &statement(&a)?, contract)?;

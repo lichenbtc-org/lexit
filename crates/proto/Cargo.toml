@@ -1,6 +1,6 @@
 [package]
-name = "liquid-lichen-proto"
-description = "liquid-lichen's part of a lichen contract: the statement's terms, the user's keys, the request-then-assert front, the mint and return keys, a view of Liquid"
+name = "lexit-proto"
+description = "Lexit's part of a lichen contract: the statement's terms, the user's keys, the request-then-assert front, the mint and return keys, a view of Liquid"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,8 +14,8 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 ureq.workspace = true
-liquid-lichen-elements.workspace = true
-liquid-lichen-statement.workspace = true
+lexit-elements.workspace = true
+lexit-statement.workspace = true
 lichen-btc.workspace = true
 lichen-wots.workspace = true
 lichen-contract.workspace = true

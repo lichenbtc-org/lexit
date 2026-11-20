@@ -1,7 +1,7 @@
 #!/bin/sh
-# The hub's prover: the hub's statement on its input (`HubInput`'s bytes), by liquid-lichen-r0 in its Docker image
-# (docker build -f r0/Dockerfile -t liquid-lichen-r0 .), the input in as a tar
-# stream and the result out on stdout. Or, with LICHEN_R0 naming liquid-lichen-r0
+# The hub's prover: the hub's statement on its input (`HubInput`'s bytes), by lexit-r0 in its Docker image
+# (docker build -f r0/Dockerfile -t lexit-r0 .), the input in as a tar
+# stream and the result out on stdout. Or, with LICHEN_R0 naming lexit-r0
 # itself (Linux), that. The Groth16 wrap (`hp-proof`) is x86 Linux's only:
 # RISC Zero's prover image runs as a sibling container through the host's
 # Docker (the socket mounted here), with its files in RISC0_WORK_DIR at
@@ -28,6 +28,6 @@ if [ "$cmd" = hp-proof ]; then
     wrap="-v /var/run/docker.sock:/var/run/docker.sock -v $tmp/r0work:$tmp/r0work -e RISC0_WORK_DIR=$tmp/r0work"
 fi
 # shellcheck disable=SC2086 # file names without spaces, ours
-tar cf - -C "$tmp" input.bin | docker run --rm -i --init $wrap --entrypoint sh "${LICHEN_R0_IMAGE:-liquid-lichen-r0}" -c \
-    "mkdir /w && cd /w && tar xf - && /src/r0/target/release/liquid-lichen-r0 $run >&2 && { [ ! -e /w/out ] || cat /w/out; }" > "$tmp/out"
+tar cf - -C "$tmp" input.bin | docker run --rm -i --init $wrap --entrypoint sh "${LICHEN_R0_IMAGE:-lexit-r0}" -c \
+    "mkdir /w && cd /w && tar xf - && /src/r0/target/release/lexit-r0 $run >&2 && { [ ! -e /w/out ] || cat /w/out; }" > "$tmp/out"
 [ "$cmd" = exec-hp ] || mv "$tmp/out" "$out"

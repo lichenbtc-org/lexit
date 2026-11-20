@@ -36,8 +36,8 @@ use alloc::vec::Vec;
 use k256::elliptic_curve::point::AffineCoordinates;
 use k256::elliptic_curve::PrimeField;
 use k256::{ProjectivePoint, PublicKey, Scalar};
-use liquid_lichen_elements::tx::{Asset, Value};
-use liquid_lichen_elements::{commit, header, merkle, tx};
+use lexit_elements::tx::{Asset, Value};
+use lexit_elements::{commit, header, merkle, tx};
 use sha2::{Digest, Sha256};
 
 pub use btc::OutPoint;
@@ -80,7 +80,7 @@ pub struct Terms {
 impl Terms {
     pub fn d(&self) -> Hash {
         let mut h = Sha256::new();
-        h.update(b"liquid-lichen/contract");
+        h.update(b"lexit/contract");
         h.update((self.signblockscript.len() as u32).to_be_bytes());
         h.update(&self.signblockscript);
         h.update(self.asset);
@@ -129,7 +129,7 @@ pub fn journal(c: u32, d: &Hash, deposit: &OutPoint) -> [u8; JOURNAL_LEN] {
 }
 
 /// The contract's return key: the hub's key `hub` (x-only) tweaked by
-/// `SHA256("liquid-lichen/return" ‖ hub ‖ D ‖ c)`, x-only. Liquid outputs
+/// `SHA256("lexit/return" ‖ hub ‖ D ‖ c)`, x-only. Liquid outputs
 /// paying it (`OP_1 <key>`) are this contract's returns, and only its:
 /// on chain they are payments to a fresh key, not linked to the hub.
 pub fn return_key(hub: &Hash, d: &Hash, c: u32) -> Option<Hash> {
@@ -137,7 +137,7 @@ pub fn return_key(hub: &Hash, d: &Hash, c: u32) -> Option<Hash> {
     sec1[1..].copy_from_slice(hub);
     let h = PublicKey::from_sec1_bytes(&sec1).ok()?;
     let mut t = Sha256::new();
-    t.update(b"liquid-lichen/return");
+    t.update(b"lexit/return");
     t.update(hub);
     t.update(d);
     t.update(c.to_be_bytes());
@@ -221,11 +221,11 @@ impl Claim {
     pub fn total(&self) -> u64 {
         self.cited.iter().fold(0u64, |s, c| s.saturating_add(c.value))
     }
-    /// `E`, what she signs: `SHA256("liquid-lichen/exit" ‖ c ‖ O_D ‖ b ‖
+    /// `E`, what she signs: `SHA256("lexit/exit" ‖ c ‖ O_D ‖ b ‖
     /// claim)`.
     pub fn fingerprint(&self, c: u32, deposit: &OutPoint, b: u32) -> Hash {
         let mut h = Sha256::new();
-        h.update(b"liquid-lichen/exit");
+        h.update(b"lexit/exit");
         h.update(c.to_be_bytes());
         h.update(deposit.to_bytes());
         h.update(b.to_be_bytes());
@@ -397,7 +397,7 @@ mod tests {
     }
 
     fn terms() -> Terms {
-        Terms { signblockscript: script(), asset: liquid_lichen_elements::LBTC, generator: commit::LBTC_GENERATOR, hub: [7; 32], from: 4_000_000, drift: 3 * 3600, work: 0, unit: 1 }
+        Terms { signblockscript: script(), asset: lexit_elements::LBTC, generator: commit::LBTC_GENERATOR, hub: [7; 32], from: 4_000_000, drift: 3 * 3600, work: 0, unit: 1 }
     }
 
     fn block(index: u32) -> (Block, Citation) {

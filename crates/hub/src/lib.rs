@@ -1,4 +1,4 @@
-//! liquid-lichen's hub: a lichen hub (`lichen_hub`, which runs the
+//! Lexit's hub: a lichen hub (`lichen_hub`, which runs the
 //! contracts) that sells a guaranteed exit from L-BTC. It has no ledger:
 //! besides its Bitcoin node it runs an Elements node (elementsd, its
 //! wallet holding the hub's L-BTC), and touches Liquid only to mint and to
@@ -15,7 +15,7 @@
 //!   lichen folds;
 //! - the dispute's front: when `request` confirms, the hub decides her
 //!   claim against Liquid. False: it proves the ground found
-//!   (`liquid_lichen_statement`) and lichen asserts. True: `request_timeout`
+//!   (`lexit_statement`) and lichen asserts. True: `request_timeout`
 //!   pays her, and the returns are the hub's.
 
 use std::collections::HashMap;
@@ -29,10 +29,10 @@ use lichen_contract::bit_tree;
 use lichen_hub::{Bits, Ctx, FrontStep, HubL2, ProverInput};
 use lichen_proto::hp::{Disputed, HpSetup, HpSetupRequest};
 use lichen_proto::{fresh_rho, Hash, Layer, OpenRequest, Record};
-use liquid_lichen_proto::decide::{decide, Found};
-use liquid_lichen_proto::liquid::{self, LiquidView, Rpc};
-use liquid_lichen_proto::{statement_outpoint, AliceKeys, Checkpoint, Deployment, HubProves, Keys, LiquidNet, SetupTerms};
-use liquid_lichen_statement::{Claim, HubInput};
+use lexit_proto::decide::{decide, Found};
+use lexit_proto::liquid::{self, LiquidView, Rpc};
+use lexit_proto::{statement_outpoint, AliceKeys, Checkpoint, Deployment, HubProves, Keys, LiquidNet, SetupTerms};
+use lexit_statement::{Claim, HubInput};
 use tiny_http::Method;
 
 pub use lichen_hub::{Config, Hub, OpeningFault};
@@ -103,19 +103,19 @@ impl LiquidHub {
         let chain = ctx.chain();
         let record = &d.record;
         let cid = record.cid();
-        let k = liquid_lichen_proto::keys(record)?;
+        let k = lexit_proto::keys(record)?;
         let terms = k.terms.terms(record.terms.unit);
         let deposit = statement_outpoint(&record.dispute.deposit);
         let req_id = d.txid("request");
         let req = chain.get_tx(&req_id).context("the request")?;
-        let (b, e, posted) = liquid_lichen_proto::requested(&req)?;
+        let (b, e, posted) = lexit_proto::requested(&req)?;
         let funding = chain.get_tx(&record.funding.txid).context("the funding")?;
-        let request = liquid_lichen_proto::exit::request_proof(chain, &funding, &req_id)?;
+        let request = lexit_proto::exit::request_proof(chain, &funding, &req_id)?;
         let req_time = u32::from_le_bytes(request.header[68..72].try_into().unwrap());
         let found = decide(&self.rpc, &terms, cid, &deposit, b, &e, &posted, req_time)?;
         let Found::False(ground, why) = found else { return Ok((found, None)) };
-        let req_block = liquid_lichen_statement::btc::Header(request.header).hash();
-        let headers = match liquid_lichen_proto::headers_for(chain, &req_block, terms.work) {
+        let req_block = lexit_statement::btc::Header(request.header).hash();
+        let headers = match lexit_proto::headers_for(chain, &req_block, terms.work) {
             Ok(h) => h,
             Err(e) => return Ok((Found::Wait(format!("the claim is false ({why}); {e:#}")), None)),
         };
@@ -127,9 +127,9 @@ impl LiquidHub {
     /// `failure`): for each bit clear in her signed `b`, by its leaf
     /// `hub_bit_i` (vlichen's).
     fn sweep_bits(ctx: &dyn Ctx, d: &Disputed) -> Result<Bits> {
-        let req = liquid_lichen_proto::link(ctx.chain(), d, "request")?;
-        let (b, wire) = liquid_lichen_proto::request_b(&req)?;
-        let k = liquid_lichen_proto::keys(&d.record)?;
+        let req = lexit_proto::link(ctx.chain(), d, "request")?;
+        let (b, wire) = lexit_proto::request_b(&req)?;
+        let k = lexit_proto::keys(&d.record)?;
         let core = d.graph.core();
         let (t, cctx) = (core.terms, core.ctx());
         let mut trees = vec![];
@@ -143,10 +143,10 @@ impl LiquidHub {
 
 impl Layer for LiquidHub {
     fn front(&self, record: &Record) -> Result<Box<dyn lichen_babe::graph::Front>> {
-        liquid_lichen_proto::front(record)
+        lexit_proto::front(record)
     }
     fn journal(&self, record: &Record) -> Result<Vec<u8>> {
-        liquid_lichen_proto::journal(record)
+        lexit_proto::journal(record)
     }
 }
 
@@ -158,10 +158,10 @@ impl HubL2 for LiquidHub {
     type Front = Front;
 
     fn info(&self) -> serde_json::Value {
-        serde_json::json!({ "liquid": self.deployment, "guests": liquid_lichen_proto::Guests::ours() })
+        serde_json::json!({ "liquid": self.deployment, "guests": lexit_proto::Guests::ours() })
     }
     fn version(&self) -> String {
-        liquid_lichen_proto::VERSION.to_string()
+        lexit_proto::VERSION.to_string()
     }
     fn pricing(&self) -> Option<lichen_proto::Pricing> {
         Some(self.pricing)
@@ -190,12 +190,12 @@ impl HubL2 for LiquidHub {
     }
     fn setup_journal(&self, cid: u32, setup: &HpSetup, _keys: &serde_json::Value) -> Result<Vec<u8>> {
         let t = setup_terms(&setup.l2)?;
-        Ok(liquid_lichen_proto::journal_of(cid, &t.d, &setup.deposit).to_vec())
+        Ok(lexit_proto::journal_of(cid, &t.d, &setup.deposit).to_vec())
     }
     fn open_keys(&self, ctx: &dyn Ctx, setup: &HpSetup, keys: &serde_json::Value, _req: &OpenRequest, t_close: u32) -> Result<(serde_json::Value, serde_json::Value)> {
         let terms = setup_terms(&setup.l2)?;
         let alice: AliceKeys = serde_json::from_value(keys.clone()).context("the user's keys")?;
-        let windows = liquid_lichen_proto::windows(ctx.cfg().network, t_close);
+        let windows = lexit_proto::windows(ctx.cfg().network, t_close);
         Ok((serde_json::to_value(Keys { alice, terms, windows })?, serde_json::to_value(windows)?))
     }
     fn offered(&self, ctx: &dyn Ctx, record: &Record, mint_point: &PublicKey, fault: OpeningFault) -> Result<serde_json::Value> {
@@ -203,7 +203,7 @@ impl HubL2 for LiquidHub {
         // funding is out, blinded to her key. (To come: the mint output's
         // refund leaf, the hub's after a timeout, for a funding never
         // broadcast; see docs/PLAN.md.)
-        let k = liquid_lichen_proto::keys(record)?;
+        let k = lexit_proto::keys(record)?;
         let sats = record.minted() - u64::from(fault == OpeningFault::ShortMint);
         let key = liquid::mint_key(&record.l2_address, mint_point)?;
         let address = liquid::p2tr_address(&key, Some(&k.alice.blinding), self.deployment.net)?;
@@ -219,7 +219,7 @@ impl HubL2 for LiquidHub {
         // her returns, each on Liquid as she cites it: the fold pays b
         let posted = hex::decode(claim).context("the claim's hex")?;
         let cid = record.cid();
-        let k = liquid_lichen_proto::keys(record)?;
+        let k = lexit_proto::keys(record)?;
         let terms = k.terms.terms(record.terms.unit);
         let deposit = statement_outpoint(&record.dispute.deposit);
         let cl = Claim::from_bytes(&posted).map_err(|r| anyhow::anyhow!("the claim: {r:?}"))?;
@@ -245,7 +245,7 @@ impl HubL2 for LiquidHub {
             ctx.note(format!("contract {cid}: the user's request timed out; she is paid her claim"));
             return Ok(FrontStep::Paid { link: r_op.txid, terminal: "request_timeout".into() });
         }
-        let w = liquid_lichen_proto::keys(&d.record)?.windows;
+        let w = lexit_proto::keys(&d.record)?.windows;
         // the assertion must confirm before her timeout
         let last_chance = s.at + u32::from(w.w_h) - (u32::from(w.w_h) / 4).max(2);
         if ctx.chain().height()? >= last_chance {
@@ -280,8 +280,8 @@ impl HubL2 for LiquidHub {
             // after a restart: decided again from the front
             return Ok(ProverInput::NotYet("deciding the claim again".into()));
         };
-        let journal = liquid_lichen_proto::journal(&d.record)?;
-        match liquid_lichen_statement::check(&input) {
+        let journal = lexit_proto::journal(&d.record)?;
+        match lexit_statement::check(&input) {
             Ok(j) if j[..] == journal[..] => Ok(ProverInput::Holds(input.to_bytes())),
             Ok(_) => anyhow::bail!("the statement's journal isn't the contract's"),
             Err(r) => Ok(ProverInput::Fails(format!("the ground ({why}) doesn't check natively: {r:?}"))),

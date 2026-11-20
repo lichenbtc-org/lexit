@@ -11,7 +11,7 @@ use lichen_proto::hp::Disputed;
 use lichen_wallet::engine::{ContractSecrets, Engine};
 use lichen_wallet::FrontEnd;
 use lichen_wots::{WotsParams, WotsSecret};
-use liquid_lichen_proto::{AliceKeys, HubProves};
+use lexit_proto::{AliceKeys, HubProves};
 
 use crate::ExitPlan;
 
@@ -28,7 +28,7 @@ pub fn hp_e(s: &ContractSecrets) -> WotsSecret {
 /// Her blinding key for the mint: the hub blinds it to her.
 pub fn blinding(s: &ContractSecrets) -> bitcoin::secp256k1::SecretKey {
     use sha2::Digest;
-    let k: [u8; 32] = sha2::Sha256::new().chain_update(b"liquid-lichen/blinding").chain_update(s.wots("liquid/blinding")).finalize().into();
+    let k: [u8; 32] = sha2::Sha256::new().chain_update(b"lexit/blinding").chain_update(s.wots("liquid/blinding")).finalize().into();
     bitcoin::secp256k1::SecretKey::from_slice(&k).expect("a key")
 }
 

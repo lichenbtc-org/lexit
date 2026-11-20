@@ -1,4 +1,4 @@
-//! The hub's statement guest (`liquid_lichen_statement::check`): "the exit
+//! The hub's statement guest (`lexit_statement::check`): "the exit
 //! claim `request` posts is false". It reads `request` in its Bitcoin
 //! block with the contract's work on it, the claim posted there, and the
 //! ground: a Liquid block signed by the federation that shows a cited
@@ -6,7 +6,7 @@
 //! input, read raw: the statement's input in bytes (`HubInput::to_bytes`).
 //! Its journal: `c ‖ D ‖ H(O_D)`, fixed at the contract's opening.
 
-use liquid_lichen_statement::{check, HubInput};
+use lexit_statement::{check, HubInput};
 use risc0_zkvm::guest::env;
 
 fn main() {

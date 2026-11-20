@@ -1,12 +1,12 @@
 [package]
-name = "liquid-lichen-wallet"
-description = "liquid-lichen's wallet: guaranteed exits from L-BTC, on a lichen wallet"
+name = "lexit-wallet"
+description = "Lexit's wallet: guaranteed exits from L-BTC, on a lichen wallet"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "liquid-lichen"
+name = "lexit"
 path = "src/main.rs"
 
 [dependencies]
@@ -19,8 +19,8 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 ureq.workspace = true
-liquid-lichen-statement.workspace = true
-liquid-lichen-proto.workspace = true
+lexit-statement.workspace = true
+lexit-proto.workspace = true
 lichen-contract.workspace = true
 lichen-chain.workspace = true
 lichen-proto.workspace = true

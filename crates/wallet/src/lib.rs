@@ -1,4 +1,4 @@
-//! liquid-lichen's wallet: a lichen wallet (`lichen_wallet`, which runs
+//! Lexit's wallet: a lichen wallet (`lichen_wallet`, which runs
 //! the contracts) whose contracts are guaranteed exits from L-BTC
 //! ([`LiquidWallet`], a [`WalletL2`]).
 //!
@@ -26,15 +26,15 @@ use lichen_proto::hp::{Disputed, HpOffer, HpSetup};
 use lichen_proto::{Hash, Info, Layer, OpenOffer, Record, Statement};
 use lichen_wallet::engine::{ContractSecrets, Engine, Outcome};
 use lichen_wallet::{FrontEnd, SweepIn, WalletL2};
-use liquid_lichen_proto::liquid::{self, Esplora, LiquidView};
-use liquid_lichen_proto::{AliceKeys, Deployment, Keys, SetupTerms, Windows};
-use liquid_lichen_statement::{Citation, Claim};
+use lexit_proto::liquid::{self, Esplora, LiquidView};
+use lexit_proto::{AliceKeys, Deployment, Keys, SetupTerms, Windows};
+use lexit_statement::{Citation, Claim};
 use serde::{Deserialize, Serialize};
 
 pub use lichen_wallet::{dispute, engine, hub_call, hub_info, Ask, Deposit, Held, Opening, Quote, Wallet, PAYOUT_FEERATE};
 
-/// A liquid-lichen wallet.
-pub type LiquidLichenWallet = Wallet<LiquidWallet>;
+/// A Lexit wallet.
+pub type LexitWallet = Wallet<LiquidWallet>;
 
 /// A return of L-BTC she made for contract `cid`: the output, its value
 /// and blinding factors (hex; zero for an explicit output).
@@ -90,7 +90,7 @@ pub struct LiquidWallet {
 }
 
 fn info_l2<T: serde::de::DeserializeOwned>(info: &Info, name: &str) -> Result<T> {
-    let v = info.l2.get(name).with_context(|| format!("the hub names no {name}: it runs no liquid-lichen of this wallet's version ({})", liquid_lichen_proto::VERSION))?;
+    let v = info.l2.get(name).with_context(|| format!("the hub names no {name}: it runs no Lexit of this wallet's version ({})", lexit_proto::VERSION))?;
     serde_json::from_value(v.clone()).with_context(|| format!("the hub's {name}"))
 }
 
@@ -151,22 +151,22 @@ impl LiquidWallet {
         let mut cited: Vec<Citation> = self.returns.iter().filter(|r| r.cid == cid).map(|r| self.cite(r)).collect::<Result<_>>()?;
         ensure!(!cited.is_empty(), "no return recorded for contract {cid}: pay L-BTC to its return address first, then record it");
         cited.sort_by_key(|c| (c.height, c.index, c.vout));
-        ensure!(cited.len() <= liquid_lichen_statement::MAX_CITED, "{} returns: a claim cites {} at most", cited.len(), liquid_lichen_statement::MAX_CITED);
+        ensure!(cited.len() <= lexit_statement::MAX_CITED, "{} returns: a claim cites {} at most", cited.len(), lexit_statement::MAX_CITED);
         let claim = Claim { cited };
         let most = u32::try_from(claim.total() / unit).unwrap_or(u32::MAX);
         let b = units.unwrap_or(most);
         ensure!(b <= most, "the returns are worth {} sats, less than {b} units of {unit}", claim.total());
-        let deposit = liquid_lichen_proto::statement_outpoint(deposit);
+        let deposit = lexit_proto::statement_outpoint(deposit);
         Ok(ExitPlan { b, e: hex::encode(claim.fingerprint(cid, &deposit, b)), posted: hex::encode(claim.to_bytes()) })
     }
 }
 
 impl Layer for LiquidWallet {
     fn front(&self, record: &Record) -> Result<Box<dyn lichen_babe::graph::Front>> {
-        liquid_lichen_proto::front(record)
+        lexit_proto::front(record)
     }
     fn journal(&self, record: &Record) -> Result<Vec<u8>> {
-        liquid_lichen_proto::journal(record)
+        lexit_proto::journal(record)
     }
 }
 
@@ -184,12 +184,12 @@ impl WalletL2 for LiquidWallet {
         if let Some(a) = d.net.policy_asset() {
             ensure!(a == d.asset, "the hub names another asset than {:?}'s L-BTC", d.net);
         }
-        let guests: liquid_lichen_proto::Guests = info_l2(info, "guests")?;
-        ensure!(guests == liquid_lichen_proto::Guests::ours(), "the hub proves with other guests than this wallet's: it runs liquid-lichen {}, this wallet {}", if info.version.is_empty() { "?" } else { &info.version }, liquid_lichen_proto::VERSION);
+        let guests: lexit_proto::Guests = info_l2(info, "guests")?;
+        ensure!(guests == lexit_proto::Guests::ours(), "the hub proves with other guests than this wallet's: it runs Lexit {}, this wallet {}", if info.version.is_empty() { "?" } else { &info.version }, lexit_proto::VERSION);
         Ok(())
     }
     fn version() -> String {
-        liquid_lichen_proto::VERSION.to_string()
+        lexit_proto::VERSION.to_string()
     }
 
     fn setup_terms(_w: &Wallet<Self>, _cid: u32, _quote: &Quote, _owner: &Hash) -> Result<serde_json::Value> {
@@ -215,7 +215,7 @@ impl WalletL2 for LiquidWallet {
     }
     fn setup_journal(cid: u32, setup: &HpSetup, _keys: &serde_json::Value) -> Result<Vec<u8>> {
         let t: SetupTerms = serde_json::from_value(setup.l2.clone()).context("the setup's terms")?;
-        Ok(liquid_lichen_proto::journal_of(cid, &t.d, &setup.deposit).to_vec())
+        Ok(lexit_proto::journal_of(cid, &t.d, &setup.deposit).to_vec())
     }
     fn record_keys(_w: &Wallet<Self>, setup: &HpSetup, keys: &serde_json::Value, offer: &HpOffer, _quote: &Quote) -> Result<serde_json::Value> {
         let windows: Windows = serde_json::from_value(offer.l2.clone()).context("the front's windows in the hub's offer")?;
@@ -223,8 +223,8 @@ impl WalletL2 for LiquidWallet {
         Ok(serde_json::to_value(Keys { alice, terms: serde_json::from_value(setup.l2.clone())?, windows })?)
     }
     fn check_offer(w: &Wallet<Self>, record: &Record, offer: &OpenOffer) -> Result<()> {
-        let k = liquid_lichen_proto::keys(record)?;
-        let want = liquid_lichen_proto::windows(record.network, offer.t_close);
+        let k = lexit_proto::keys(record)?;
+        let want = lexit_proto::windows(record.network, offer.t_close);
         ensure!(k.windows == want, "the front's windows {:?}, not the network's {want:?}", k.windows);
         // D − fee of the policy asset, to the mint key behind this
         // funding's adaptor point, confirmed on Liquid before she signs
@@ -304,8 +304,8 @@ impl WalletL2 for LiquidWallet {
     }
     fn payout_inputs(w: &Wallet<Self>, _chain: &Chain, held: &Held, _statement: &Statement, _outcome: &Outcome, payout: &Transaction, b: u32) -> Result<(Vec<SweepIn>, Vec<Vec<u8>>, u16)> {
         let txid = payout.compute_txid();
-        let k = liquid_lichen_proto::keys(&held.record)?;
-        let g = liquid_lichen_proto::front(&held.record)?;
+        let k = lexit_proto::keys(&held.record)?;
+        let g = lexit_proto::front(&held.record)?;
         let core = g.core();
         let (t, ctx) = (core.terms, core.ctx());
         let delta = core.params.delta;
@@ -325,9 +325,9 @@ impl WalletL2 for LiquidWallet {
 }
 
 /// The return address of contract `cid` (one she holds).
-pub fn return_address(w: &LiquidLichenWallet, cid: u32) -> Result<elements::Address> {
+pub fn return_address(w: &LexitWallet, cid: u32) -> Result<elements::Address> {
     let h = w.contracts.iter().find(|h| h.record.cid() == cid).with_context(|| format!("no contract {cid}"))?;
-    let k = liquid_lichen_proto::keys(&h.record)?;
+    let k = lexit_proto::keys(&h.record)?;
     let d = &w.l2.deployment;
     liquid::return_address(&d.hub, &k.terms.d, cid, &d.hub_blinding, d.net)
 }

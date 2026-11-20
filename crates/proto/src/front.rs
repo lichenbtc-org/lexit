@@ -11,13 +11,13 @@
 //!
 //! The contract output's `request` leaf carries her signatures on `b` and
 //! `E`, and the claim posted below them: her returns of L-BTC cited (the
-//! hub's statement reads it, `liquid_lichen_statement`).
+//! hub's statement reads it, `lexit_statement`).
 
 use anyhow::{ensure, Context, Result};
 use lichen_babe::graph::{drop_n, link_leaf, Front, FrontLink, Payout};
 use lichen_btc::bitcoin::{Amount, TxOut};
 use lichen_contract::{wots_shape, ContractParams, Core, PartyPubKeys, Role, Terms};
-use liquid_lichen_statement::{posted_items, POSTED_ITEM, POSTED_ITEMS};
+use lexit_statement::{posted_items, POSTED_ITEM, POSTED_ITEMS};
 use lichen_wots::{WotsExt, WotsParams, WotsPublic, WotsSig};
 
 /// The front's windows: `w_H` for the hub's assertion; `t_a` her

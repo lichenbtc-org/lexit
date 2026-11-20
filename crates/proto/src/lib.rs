@@ -1,4 +1,4 @@
-//! liquid-lichen's part of a lichen contract.
+//! Lexit's part of a lichen contract.
 //!
 //! A contract is a guaranteed exit from L-BTC: the user pays BTC in and is
 //! paid L-BTC on Liquid (the mint, behind the funding's adaptor point:
@@ -28,9 +28,9 @@ use serde::{Deserialize, Serialize};
 
 pub use front::{HubProves, Windows};
 pub use liquid::LiquidNet;
-pub use liquid_lichen_statement as statement;
+pub use lexit_statement as statement;
 
-/// liquid-lichen's version (the workspace's): what its hub and wallet
+/// Lexit's version (the workspace's): what its hub and wallet
 /// report.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

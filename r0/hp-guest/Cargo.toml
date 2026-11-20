@@ -14,7 +14,7 @@ rust-version = "1.97"
 resolver = "3"
 
 [dependencies]
-liquid-lichen-statement = { path = "../../crates/statement" }
+lexit-statement = { path = "../../crates/statement" }
 risc0-zkvm = { version = "=3.1.0", default-features = false, features = ["std"] }
 
 # RISC Zero's accelerated crypto: Bitcoin's and Liquid's hashes are

@@ -36,7 +36,7 @@ impl LiquidNet {
     /// Its policy asset (L-BTC), if fixed: a regtest chain's is its own.
     pub fn policy_asset(self) -> Option<Hash> {
         match self {
-            LiquidNet::Liquid => Some(liquid_lichen_elements::LBTC),
+            LiquidNet::Liquid => Some(lexit_elements::LBTC),
             LiquidNet::Testnet => internal("144c654344aa716d6f3abcc1ca90e5641e4e2a7f633bc09fe3baf64585819a49").ok(),
             LiquidNet::Regtest => None,
         }
@@ -104,7 +104,7 @@ impl Rpc {
     }
     fn call_at(&self, url: &str, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
         let auth = std::fs::read_to_string(&self.cookie).with_context(|| format!("elementsd's cookie {}", self.cookie.display()))?;
-        let body = serde_json::json!({ "jsonrpc": "1.0", "id": "liquid-lichen", "method": method, "params": params });
+        let body = serde_json::json!({ "jsonrpc": "1.0", "id": "lexit", "method": method, "params": params });
         let r = ureq::post(url).set("Authorization", &format!("Basic {}", base64(auth.trim().as_bytes()))).send_json(body);
         let v: serde_json::Value = match r {
             Ok(r) => r.into_json()?,
@@ -203,7 +203,7 @@ pub fn block_at(view: &dyn LiquidView, height: u32) -> Result<(Vec<u8>, Vec<Hash
 pub fn mint_key(l2_address: &Hash, mint_point: &PublicKey) -> Result<XOnlyPublicKey> {
     let secp = Secp256k1::verification_only();
     let a = XOnlyPublicKey::from_slice(l2_address).context("the L2 address isn't a key")?.public_key(bitcoin::secp256k1::Parity::Even);
-    let h: [u8; 32] = Sha256::new().chain_update(b"liquid-lichen/mint").chain_update(l2_address).chain_update(mint_point.serialize()).finalize().into();
+    let h: [u8; 32] = Sha256::new().chain_update(b"lexit/mint").chain_update(l2_address).chain_update(mint_point.serialize()).finalize().into();
     let ha = a.mul_tweak(&secp, &bitcoin::secp256k1::Scalar::from_be_bytes(h).context("a tweak out of range")?)?;
     Ok(ha.combine(mint_point)?.x_only_public_key().0)
 }
@@ -215,7 +215,7 @@ pub fn mint_secret(a: &bitcoin::secp256k1::Keypair, t: &bitcoin::secp256k1::Secr
     let secp = Secp256k1::signing_only();
     let (l2, parity) = a.x_only_public_key();
     let mint_point = PublicKey::from_secret_key(&secp, t);
-    let h: [u8; 32] = Sha256::new().chain_update(b"liquid-lichen/mint").chain_update(l2.serialize()).chain_update(mint_point.serialize()).finalize().into();
+    let h: [u8; 32] = Sha256::new().chain_update(b"lexit/mint").chain_update(l2.serialize()).chain_update(mint_point.serialize()).finalize().into();
     let mut sk = a.secret_key();
     if parity == bitcoin::secp256k1::Parity::Odd {
         sk = sk.negate();
@@ -233,10 +233,10 @@ pub fn p2tr_address(key: &XOnlyPublicKey, blinder: Option<&PublicKey>, net: Liqu
 }
 
 /// The address of contract `c`'s returns (`D` its terms' hash): its
-/// return key ([`liquid_lichen_statement::return_key`]), blinded to the
+/// return key ([`lexit_statement::return_key`]), blinded to the
 /// hub's blinding key, so the hub unblinds them.
 pub fn return_address(hub: &Hash, d: &Hash, c: u32, hub_blinding: &PublicKey, net: LiquidNet) -> Result<elements::Address> {
-    let k = liquid_lichen_statement::return_key(hub, d, c).context("the hub's key isn't a key")?;
+    let k = lexit_statement::return_key(hub, d, c).context("the hub's key isn't a key")?;
     p2tr_address(&XOnlyPublicKey::from_slice(&k)?, Some(hub_blinding), net)
 }
 
@@ -245,7 +245,7 @@ pub fn return_address(hub: &Hash, d: &Hash, c: u32, hub_blinding: &PublicKey, ne
 pub fn signblockscript(view: &dyn LiquidView) -> Result<Vec<u8>> {
     let hash = view.block_hash(view.height()?)?;
     let b = view.header(&hash)?;
-    let h = liquid_lichen_elements::header::parse(&b).context("the tip's header isn't dynafed")?;
+    let h = lexit_elements::header::parse(&b).context("the tip's header isn't dynafed")?;
     let s = h.current.signblockscript().context("the tip's header names no signing script")?;
     ensure!(s.len() == 34 && s[..2] == [0, 0x20], "the block signing script isn't P2WSH");
     Ok(s.to_vec())

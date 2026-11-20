@@ -1,4 +1,4 @@
-//! `liquid-lichen-hub`: the hub daemon (a lichen hub selling a guaranteed
+//! `lexit-hub`: the hub daemon (a lichen hub selling a guaranteed
 //! exit from L-BTC). It runs beside a Bitcoin node (its wallet funds the
 //! contracts) and an Elements node (its wallet pays the mints).
 //!
@@ -11,12 +11,12 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::Parser;
 use lichen_proto::{fresh_rho, Statement};
-use liquid_lichen_hub::{liquid_dir, Config, Hub, LiquidHub};
-use liquid_lichen_proto::liquid::Rpc;
-use liquid_lichen_proto::LiquidNet;
+use lexit_hub::{liquid_dir, Config, Hub, LiquidHub};
+use lexit_proto::liquid::Rpc;
+use lexit_proto::LiquidNet;
 
 #[derive(Parser)]
-#[command(about = "A liquid-lichen hub")]
+#[command(about = "A Lexit hub")]
 struct Args {
     /// The Bitcoin network: `regtest`, `mutinynet`, `signet` or `testnet4`.
     #[arg(long, default_value = "regtest")]
@@ -104,7 +104,7 @@ fn main() -> Result<()> {
             rpc_url: a.rpc_url.context("--rpc-url: the Bitcoin node's RPC URL")?,
             cookie: a.cookie.context("--cookie: the Bitcoin node's cookie file")?,
             wallet: a.chain_wallet,
-            statement: Statement::parse(&a.statement, lichen_babe::statement::image_id(liquid_lichen_proto::HP_IMAGE_ID))?,
+            statement: Statement::parse(&a.statement, lichen_babe::statement::image_id(lexit_proto::HP_IMAGE_ID))?,
             prover: Some(PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../r0/hp-prover.sh"))),
             dir: a.dir.clone(),
             seed,
@@ -119,7 +119,7 @@ fn main() -> Result<()> {
         },
         l2,
     )?;
-    println!("liquid-lichen hub at {}", hub.url);
+    println!("Lexit hub at {}", hub.url);
     loop {
         std::thread::park();
     }

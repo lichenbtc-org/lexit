@@ -1,6 +1,6 @@
 # The guest
 
-`hp.bin` will be the program the prover (`liquid-lichen-r0`) proves and
+`hp.bin` will be the program the prover (`lexit-r0`) proves and
 BABE's Groth16 wrap verifies: the hub's statement (`crates/statement`,
 `check`), built by `r0/build-guest.sh elf hp` (x86 Linux) then `pack hp`.
 `hp.id` is its image id; a contract pins it at its opening.

@@ -1,12 +1,12 @@
 [package]
-name = "liquid-lichen-hub"
-description = "liquid-lichen's hub: a guaranteed exit from L-BTC, on a lichen hub"
+name = "lexit-hub"
+description = "Lexit's hub: a guaranteed exit from L-BTC, on a lichen hub"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "liquid-lichen-hub"
+name = "lexit-hub"
 path = "src/main.rs"
 
 [dependencies]
@@ -17,8 +17,8 @@ hex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tiny_http.workspace = true
-liquid-lichen-statement.workspace = true
-liquid-lichen-proto.workspace = true
+lexit-statement.workspace = true
+lexit-proto.workspace = true
 lichen-contract.workspace = true
 lichen-chain.workspace = true
 lichen-proto.workspace = true

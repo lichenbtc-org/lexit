@@ -1,5 +1,5 @@
 [package]
-name = "liquid-lichen-elements"
+name = "lexit-elements"
 description = "What the hub's statement reads of Liquid: dynafed headers and their block signatures, transactions and their confidential outputs, Merkle paths, Pedersen commitments opened"
 # self-contained (not inherited from the workspace): the statement guest
 # builds it alone
