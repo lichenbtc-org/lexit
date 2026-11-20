@@ -7,6 +7,9 @@
 //!   (its cycles), the committed one or another build;
 //! - `wrap <receipt> <out>`: the Groth16 receipt of a succinct receipt of
 //!   the hub's statement (x86 Linux with Docker: RISC Zero's gnark step);
+//! - `seal <Groth16 receipt> <out>`: its seal (r0/hp-split.sh's, after
+//!   `wrap` elsewhere); `wrap-seal <receipt> <out>`: `wrap`, writing the
+//!   seal;
 //! - `hp-proof <hub input> <out>`: `hp` then `wrap`, writing the Groth16
 //!   seal (256 bytes: A, B, C uncompressed, big-endian, RISC Zero's), what
 //!   the hub asserts (`lichen_babe::risc0`);
@@ -146,6 +149,12 @@ fn main() -> Result<()> {
         // build, for its cycles
         ["exec-hp", input, guest] => prove_hp_with(hp_input(input)?, true, read(guest)?).map(|_| ()),
         ["wrap", receipt, out] => write(out, &bincode::serialize(&wrap(&load(receipt)?)?)?),
+        ["seal", receipt, out] => write(out, &seal(&load(receipt)?)?),
+        ["wrap-seal", receipt, out] => {
+            write(out, &seal(&wrap(&load(receipt)?)?)?)?;
+            eprintln!("lexit-r0: {out}: the Groth16 seal of the hub's statement");
+            Ok(())
+        }
         ["hp-proof", input, out] => {
             let r = prove_hp(hp_input(input)?, false)?.context("a receipt")?;
             write(out, &seal(&wrap(&r)?)?)?;
@@ -172,6 +181,6 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
-        _ => bail!("usage: lexit-r0 hp <hub input> <out> [<packed guest>] | exec-hp <hub input> [<packed guest>] | wrap <receipt> <out> | hp-proof <hub input> <out> | pack <guest ELF> <out> | pack-id <bin> | image-id | check-id"),
+        _ => bail!("usage: lexit-r0 hp <hub input> <out> [<packed guest>] | exec-hp <hub input> [<packed guest>] | wrap <receipt> <out> | wrap-seal <receipt> <out> | seal <Groth16 receipt> <out> | hp-proof <hub input> <out> | pack <guest ELF> <out> | pack-id <bin> | image-id | check-id"),
     }
 }

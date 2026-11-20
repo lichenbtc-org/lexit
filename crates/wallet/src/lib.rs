@@ -149,7 +149,7 @@ impl LiquidWallet {
                 self.birth = view.height()?;
             }
             let backend = match &self.node {
-                Some(rpc) => lbtc::Backend::Node(lbtc::NodeBackend::new(rpc.clone(), self.birth)),
+                Some(rpc) => lbtc::Backend::Node(Box::new(lbtc::NodeBackend::new(rpc.clone(), self.birth))),
                 None => lbtc::Backend::Esplora(Box::new(lwk_wollet::blocking::EsploraClient::new(&self.esplora, network)?)),
             };
             let p = lbtc::Purse::new(&self.mnemonic, network, backend)?;

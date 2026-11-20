@@ -5,13 +5,12 @@ BABE's Groth16 wrap verifies: the hub's statement (`crates/statement`,
 `check`), built by `r0/build-guest.sh elf hp` (x86 Linux) then `pack hp`.
 `hp.id` is its image id; a contract pins it at its opening.
 
-Not built yet: `hp.id` is all zeros, and only the mock statement
-(`hub-proves-mock`) runs. `r0/Cargo.lock` and `r0/hp-guest/Cargo.lock`
-are made at the first build (`cargo generate-lockfile`), then committed:
-the builds are `--locked`.
+`r0/Cargo.lock` and `r0/hp-guest/Cargo.lock` are committed: the builds
+are `--locked`.
 
 | guest | built | image id |
 |---|---|---|
+| **hp**, the statement at M4 (three grounds: malformed, not a return, too high; the federation's signatures checked, the commitments opened), RISC Zero 3.1.0, builder r0.1.97.0, 2026-11-20: **the current file** | x86 Linux (lichen-vps), `build-guest.sh elf hp` then `pack hp` there. ELF SHA-256 `092f97bfd3a0fcf39132b4e900e4470f16b376d941bf0cf7759c6339ec9e0293`; `hp.bin` 470,012 bytes, SHA-256 `53f64353634dccb8fb7775e2274bdabbdb73c012daab64a2ec52e9d055635937`. Executed on the M1 inputs: the same cycles as the native build's (below, within 33) | **`8be84dc9c422a701a5bf6bd270eb76f61b23da8424546c3342acef69e34b8ff3`** |
 
 ## Measured (M1, 2026-11-20)
 
@@ -40,5 +39,11 @@ calibration's difference); parsing the 18 kB transaction, about 0.3M.
 
 Proved (`lexit-r0 hp`, succinct, the receipt verified): the heaviest
 ground, not a return by its script on the mainnet block (5,181k user
-cycles, 6 segments), on a Mac (14 cores, CPU) in 346 s. The Groth16 wrap
-is still to measure (x86 Linux with Docker).
+cycles, 6 segments), on a Mac (14 cores, CPU) in 346 s.
+
+Proved for real, end to end (`crates/hub/tests/hp_real.rs`, opt-in): a
+malformed claim on regtest, the hub on `hub-proves` with r0/hp-split.sh.
+The STARK took 17 s on a Mac (147k user cycles, 1 segment) and the Groth16
+wrap 330 s on lichen-vps (RISC Zero's prover image, Docker). The user's
+wallet checked the proof under BABE, found it valid and conceded; the exit
+took 365 s in all.

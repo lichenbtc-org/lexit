@@ -8,8 +8,9 @@
 # the same path on the host and in the container.
 #
 #   hp-prover.sh hp-proof|hp|exec-hp <hub input> <out>
+#   hp-prover.sh wrap|wrap-seal <succinct receipt> <out>   (r0/hp-split.sh's)
 set -eu
-[ $# -eq 3 ] || { echo "usage: $0 hp-proof|hp|exec-hp <hub input> <out>" >&2; exit 2; }
+[ $# -eq 3 ] || { echo "usage: $0 hp-proof|hp|exec-hp|wrap|wrap-seal <input> <out>" >&2; exit 2; }
 cmd=$1 input=$2 out=$3
 if [ -n "${LICHEN_R0:-}" ]; then
     [ "$cmd" = exec-hp ] && exec "$LICHEN_R0" exec-hp "$input"
@@ -23,7 +24,7 @@ exec-hp) run="exec-hp input.bin" ;;
 *) run="$cmd input.bin /w/out" ;;
 esac
 wrap=
-if [ "$cmd" = hp-proof ]; then
+if [ "$cmd" = hp-proof ] || [ "$cmd" = wrap ] || [ "$cmd" = wrap-seal ]; then
     mkdir "$tmp/r0work"
     wrap="-v /var/run/docker.sock:/var/run/docker.sock -v $tmp/r0work:$tmp/r0work -e RISC0_WORK_DIR=$tmp/r0work"
 fi

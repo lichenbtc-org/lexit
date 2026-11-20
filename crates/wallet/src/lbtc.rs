@@ -54,19 +54,21 @@ pub fn new_mnemonic(network: Network) -> Result<String> {
 }
 
 /// elementsd as LWK's backend: blocks read from the node and indexed by
-/// script (outputs paying it, inputs spending them) from `from` up; only
-/// confirmed transactions.
+/// script (outputs paying it, inputs spending them) from `from` up, and
+/// the mempool's transactions, read afresh at each scan (as an Esplora
+/// reports them: so that a payment can follow an unconfirmed one).
 pub struct NodeBackend {
     pub rpc: Rpc,
     scanned: Option<u32>,
     from: u32,
     by_script: HashMap<Script, Vec<(Txid, u32, BlockHash)>>,
     spk_of: HashMap<OutPoint, Script>,
+    mempool: HashMap<Script, Vec<Txid>>,
 }
 
 impl NodeBackend {
     pub fn new(rpc: Rpc, from: u32) -> NodeBackend {
-        NodeBackend { rpc, scanned: None, from, by_script: HashMap::new(), spk_of: HashMap::new() }
+        NodeBackend { rpc, scanned: None, from, by_script: HashMap::new(), spk_of: HashMap::new(), mempool: HashMap::new() }
     }
 
     fn block_hash(&self, h: u32) -> Result<BlockHash> {
@@ -97,6 +99,33 @@ impl NodeBackend {
                 }
             }
             self.scanned = Some(h);
+        }
+        // the mempool, afresh: its outputs, and its inputs spending outputs
+        // indexed (confirmed, or the mempool's own)
+        self.mempool.clear();
+        let mut spk_of: HashMap<OutPoint, Script> = HashMap::new();
+        let ids = self.rpc.call("getrawmempool", serde_json::json!([]))?;
+        let txs: Vec<Transaction> = ids
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|t| self.rpc.call("getrawtransaction", serde_json::json!([t])).ok())
+            .filter_map(|h| hex::decode(h.as_str().unwrap_or_default()).ok().and_then(|b| deserialize(&b).ok()))
+            .collect();
+        for tx in &txs {
+            for (vout, o) in tx.output.iter().enumerate() {
+                if !o.script_pubkey.is_empty() {
+                    spk_of.insert(OutPoint::new(tx.txid(), vout as u32), o.script_pubkey.clone());
+                    self.mempool.entry(o.script_pubkey.clone()).or_default().push(tx.txid());
+                }
+            }
+        }
+        for tx in &txs {
+            for i in &tx.input {
+                if let Some(spk) = self.spk_of.get(&i.previous_output).or_else(|| spk_of.get(&i.previous_output)) {
+                    self.mempool.entry(spk.clone()).or_default().push(tx.txid());
+                }
+            }
         }
         Ok(())
     }
@@ -144,13 +173,17 @@ impl BlockchainBackend for NodeBackend {
             .iter()
             .map(|s| {
                 let mut seen = std::collections::HashSet::new();
-                self.by_script
+                let confirmed = self
+                    .by_script
                     .get(*s)
                     .into_iter()
                     .flatten()
                     .filter(|(t, _, _)| seen.insert(*t))
                     .map(|(txid, h, hash)| History { txid: *txid, height: *h as i32, block_hash: Some(*hash), block_timestamp: None, v: 0 })
-                    .collect()
+                    .collect::<Vec<_>>();
+                // unconfirmed: -1, its parents perhaps unconfirmed too
+                let unconfirmed = self.mempool.get(*s).into_iter().flatten().filter(|t| seen.insert(**t)).map(|t| History { txid: *t, height: -1, block_hash: None, block_timestamp: None, v: 0 });
+                confirmed.into_iter().chain(unconfirmed).collect()
             })
             .collect())
     }
@@ -159,14 +192,19 @@ impl BlockchainBackend for NodeBackend {
 /// Where the purse syncs from: LWK's Esplora client, or a node.
 pub enum Backend {
     Esplora(Box<lwk_wollet::blocking::EsploraClient>),
-    Node(NodeBackend),
+    Node(Box<NodeBackend>),
 }
 
 impl Backend {
     fn full_scan(&mut self, w: &Wollet) -> Result<Option<lwk_wollet::Update>> {
         Ok(match self {
             Backend::Esplora(c) => c.full_scan(w)?,
-            Backend::Node(n) => n.full_scan(w)?,
+            Backend::Node(n) => {
+                // LWK asks scripts' histories before the tip: the index
+                // caught up first
+                n.catch_up()?;
+                n.full_scan(w)?
+            }
         })
     }
     fn broadcast(&self, tx: &Transaction) -> Result<Txid> {

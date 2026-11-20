@@ -24,11 +24,8 @@ fn a_contract_opens_with_a_mint_and_folds_against_a_return() {
     assert_eq!(mint.value, held.record.minted());
     assert!(hub.log().iter().any(|l| l.contains(&format!("contract {cid}: minted"))));
     assert!(mint.swept.is_some(), "the mint swept at the opening");
-    let mut balance = 0;
-    wait("the swept mint in her L-BTC", || {
-        balance = w.l2.lbtc_balance().unwrap();
-        balance > 0
-    });
+    // at once, unconfirmed (as an Esplora shows it): her L-BTC can pay
+    let balance = w.l2.lbtc_balance().unwrap();
     assert!(balance <= mint.value && balance > mint.value - 1_000, "the mint, less the sweep's fee: {balance}");
 
     // a return, from her L-BTC: opened and recorded by her wallet
