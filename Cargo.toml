@@ -44,6 +44,17 @@ lichen-wallet = { git = "https://github.com/lichenbtc-org/lichen", rev = "e6532c
 lichen-btc = { git = "https://github.com/lichenbtc-org/lichen-btc", rev = "d7d2de04f7f8d51b44f61a68c7e1789f36502071" }
 lichen-wots = { git = "https://github.com/lichenbtc-org/lichen-btc", rev = "d7d2de04f7f8d51b44f61a68c7e1789f36502071" }
 
+# lichen's pricing (its branch `pricing`, 0224b0f: a fee by capital and
+# time, HubL2::pricing), from the local worktree until it is pushed: then
+# the revs above move to it and this patch goes
+[patch."https://github.com/lichenbtc-org/lichen"]
+lichen-contract = { path = "../lichen-pricing/crates/contract" }
+lichen-chain = { path = "../lichen-pricing/crates/chain" }
+lichen-proto = { path = "../lichen-pricing/crates/proto" }
+lichen-babe = { path = "../lichen-pricing/crates/babe" }
+lichen-hub = { path = "../lichen-pricing/crates/hub" }
+lichen-wallet = { path = "../lichen-pricing/crates/wallet" }
+
 # Dependencies (lichen's crates among them) optimised even in debug
 # builds: the pre-signing, the garbling and the curve arithmetic are too
 # slow at opt-level 0 for a hub to answer within a move's window in the

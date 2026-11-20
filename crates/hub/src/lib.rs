@@ -43,6 +43,9 @@ pub use lichen_hub::{Config, Hub, OpeningFault};
 pub struct LiquidHub {
     pub rpc: Rpc,
     pub deployment: Deployment,
+    /// Its fee: a yearly rate on the L-BTC it pays out at an opening (`D`)
+    /// and on the BTC it locks beyond it (the liquidity), for the term.
+    pub pricing: lichen_proto::Pricing,
     return_secret: SecretKey,
     blinding_secret: SecretKey,
     decided: Mutex<HashMap<u32, (String, HubInput)>>,
@@ -73,7 +76,7 @@ impl LiquidHub {
     /// The hub on `net`, its node at `rpc`, its keys in `dir`
     /// (`liquid.key`, the return key's secret; `blinding.key`), made on
     /// first start. The block signing script is the node's tip's.
-    pub fn open(dir: &Path, net: LiquidNet, rpc: Rpc) -> Result<LiquidHub> {
+    pub fn open(dir: &Path, net: LiquidNet, rpc: Rpc, pricing: lichen_proto::Pricing) -> Result<LiquidHub> {
         std::fs::create_dir_all(dir)?;
         let return_secret = load_or_create(&dir.join("liquid.key"))?;
         let blinding_secret = load_or_create(&dir.join("blinding.key"))?;
@@ -85,7 +88,7 @@ impl LiquidHub {
             anyhow::ensure!(a == asset, "the node's policy asset isn't {net:?}'s L-BTC: another chain?");
         }
         let deployment = Deployment { net, asset, signblockscript, hub, hub_blinding: PublicKey::from_secret_key(&secp, &blinding_secret) };
-        Ok(LiquidHub { rpc, deployment, return_secret, blinding_secret, decided: Mutex::new(HashMap::new()) })
+        Ok(LiquidHub { rpc, deployment, pricing, return_secret, blinding_secret, decided: Mutex::new(HashMap::new()) })
     }
 
     /// The secrets of contract `c`'s returns: its return key's (spending
@@ -159,6 +162,9 @@ impl HubL2 for LiquidHub {
     }
     fn version(&self) -> String {
         liquid_lichen_proto::VERSION.to_string()
+    }
+    fn pricing(&self) -> Option<lichen_proto::Pricing> {
+        Some(self.pricing)
     }
     fn route(&self, _ctx: &dyn Ctx, _method: &Method, _path: &str, _body: &str) -> Option<Result<String>> {
         // payments are Liquid's: the hub serves none

@@ -50,10 +50,18 @@ struct Args {
     /// The hub's reserve, parts per million of the cap.
     #[arg(long, default_value_t = 20_000)]
     reserve_ppm: u64,
-    /// The hub's fee for a contract's liquidity (for the contract's term),
-    /// parts per million of it, kept out of the user's minted L-BTC.
-    #[arg(long, default_value_t = 10_000)]
-    fee_ppm: u64,
+    /// The hub's fee, kept out of the L-BTC it pays the user at the
+    /// opening: a yearly rate, in parts per million, on that L-BTC (`D`:
+    /// its cost of holding it and its risk on it) ...
+    #[arg(long, default_value_t = 30_000)]
+    deposit_ppm_year: u64,
+    /// ... and on the BTC it locks in the contract beyond `D` (the
+    /// liquidity), for the contract's term ...
+    #[arg(long, default_value_t = 50_000)]
+    liquidity_ppm_year: u64,
+    /// ... and a flat part per contract, in sats.
+    #[arg(long, default_value_t = 0)]
+    flat_fee: u64,
     /// The most liquidity a contract may ask, in sats.
     #[arg(long, default_value_t = 10_000_000)]
     max_liquidity: u64,
@@ -87,7 +95,8 @@ fn main() -> Result<()> {
         cookie: a.elements_cookie.context("--elements-cookie: the Elements node's cookie file")?,
         wallet: a.elements_wallet,
     };
-    let l2 = LiquidHub::open(&liquid_dir(&a.dir), liquid, rpc)?;
+    let pricing = lichen_proto::Pricing { deposit_ppm_year: a.deposit_ppm_year, liquidity_ppm_year: a.liquidity_ppm_year, flat: a.flat_fee };
+    let l2 = LiquidHub::open(&liquid_dir(&a.dir), liquid, rpc, pricing)?;
     let hub = Hub::start(
         Config {
             network: a.network,
@@ -100,7 +109,8 @@ fn main() -> Result<()> {
             dir: a.dir.clone(),
             seed,
             reserve_ppm: a.reserve_ppm,
-            fee_ppm: a.fee_ppm,
+            // unused: the fee is the pricing's
+            fee_ppm: 0,
             max_liquidity: a.max_liquidity,
             duration: a.duration.unwrap_or(lichen_proto::default_duration(a.network)),
             refuse_folds: a.hostile || a.refuse_folds,
