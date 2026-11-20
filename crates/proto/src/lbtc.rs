@@ -236,12 +236,24 @@ impl Purse {
         Ok(Purse { wollet: lwk_wollet::WolletBuilder::new(network, desc).build()?, signer, network, backend })
     }
 
-    /// Catch up with the chain.
+    /// Catch up with the chain. A scan that fails is tried again after 1,
+    /// then 4 seconds: a public server's connection dropped while pooled
+    /// (seen: "error sending request" to Waterfalls), a moment's refusal.
     pub fn sync(&mut self) -> Result<()> {
-        if let Some(u) = self.backend.full_scan(&self.wollet)? {
-            self.wollet.apply_update(u)?;
+        let mut tries = [1u64, 4].into_iter();
+        loop {
+            match self.backend.full_scan(&self.wollet) {
+                Ok(Some(u)) => {
+                    self.wollet.apply_update(u)?;
+                    return Ok(());
+                }
+                Ok(None) => return Ok(()),
+                Err(e) => match tries.next() {
+                    Some(wait) => std::thread::sleep(std::time::Duration::from_secs(wait)),
+                    None => return Err(e),
+                },
+            }
         }
-        Ok(())
     }
 
     /// The L-BTC held, in sats.
