@@ -346,7 +346,10 @@ function setHTML(id, html) {
   if (el.dataset.html === html) return false;
   const vals = {}, focus = document.activeElement?.id;
   el.querySelectorAll('input[data-typed]').forEach(i => vals[i.id] = i.value);
+  // sections the user opened stay open (a redraw would close them)
+  const opened = [...el.querySelectorAll('details[id][open]')].map(d => d.id);
   el.innerHTML = html; el.dataset.html = html;
+  opened.forEach(id => { const d = el.querySelector('#' + CSS.escape(id)); if (d) d.open = true; });
   el.querySelectorAll('input').forEach(i => { if (vals[i.id] !== undefined) { i.value = vals[i.id]; i.dataset.typed = 1; } });
   if (focus && el.querySelector('#' + focus)) $(focus).focus();
   return true;
@@ -595,7 +598,7 @@ function renderJob(snap) {
     const last = j.log.length ? j.log[j.log.length - 1] : '';
     body = j.running ? `<div class="row"><span class="spin"></span><span class="sub">${esc(last || 'working …')}</span></div>` : '';
     if (j.error) body += `<div class="msg bad">${esc(j.error)}</div>`; else if (j.result) body += `<div class="msg good">${esc(j.result)}</div>`;
-    if (j.log.length) body += `<details class="mt"><summary>Details</summary><div class="mono mt" style="white-space:pre-wrap">${esc(j.log.slice(-20).join('\n'))}</div></details>`;
+    if (j.log.length) body += `<details id="joblog" class="mt"><summary>Details</summary><div class="mono mt" style="white-space:pre-wrap">${esc(j.log.slice(-20).join('\n'))}</div></details>`;
   }
   setHTML('jobbody', body);
   const img = document.querySelector('#jobbody img[data-pay]'); if (img) qr(img, img.dataset.pay);
@@ -684,7 +687,7 @@ function render() {
     if (c.disputing != null && !c.closed) acts += `<button class="btn small mt" data-exit="${c.cid}">Exit on Bitcoin</button><div class="note">the hub didn't pay your exit: your claim goes on chain, and the hub pays it unless it proves it false</div>`;
     if (!c.closed && !c.defaulted && over) acts += `<button class="btn small sec mt" data-d="${c.cid}">Post the default (your reserve back)</button>`;
     if (!c.mint_claimed) acts += `<button class="btn small sec mt" data-m="${c.cid}">Sweep its L-BTC into your wallet</button>`;
-    if (!c.closed && c.return_address) acts += `<details class="mt"><summary>Its return address on Liquid</summary><div class="note mt">Paying here from another wallet counts for the contract only once recorded (the command line's record-return); this app returns from your wallet itself.</div><div class="mono mt">${esc(c.return_address)}</div></details>`;
+    if (!c.closed && c.return_address) acts += `<details id="ra-${c.cid}" class="mt"><summary>Its return address on Liquid</summary><div class="note mt">Paying here from another wallet counts for the contract only once recorded (the command line's record-return); this app returns from your wallet itself.</div><div class="mono mt">${esc(c.return_address)}</div></details>`;
     if ((c.closed || c.defaulted) && c.disputing == null && c.budget !== 0) acts += `<button class="btn small sec mt" data-f="${c.cid}">Sweep the fee budget${c.budget ? ` (${sats(c.budget)} sats)` : ''}</button>`;
     return h + acts + '</div>';
   }).join(''));
