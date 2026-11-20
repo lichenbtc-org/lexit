@@ -41,6 +41,8 @@ pub use lichen_hub::{Config, Hub, OpeningFault};
 /// and each dispute's input once its claim is found false.
 pub struct LiquidHub {
     pub rpc: Rpc,
+    /// Where it keeps its mints (`mints/<cid>.json`), for their refunds.
+    dir: PathBuf,
     pub deployment: Deployment,
     /// Its fee: a yearly rate on the L-BTC it pays out at an opening (`D`)
     /// and on the BTC it locks beyond it (the liquidity), for the term.
@@ -84,7 +86,49 @@ impl LiquidHub {
             anyhow::ensure!(a == asset, "the node's policy asset isn't {net:?}'s L-BTC: another chain?");
         }
         let deployment = Deployment { net, asset, signblockscript, hub };
-        Ok(LiquidHub { rpc, deployment, pricing, return_secret, decided: Mutex::new(HashMap::new()) })
+        std::fs::create_dir_all(dir.join("mints"))?;
+        Ok(LiquidHub { rpc, dir: dir.to_path_buf(), deployment, pricing, return_secret, decided: Mutex::new(HashMap::new()) })
+    }
+
+    fn mint_path(&self, cid: u32) -> PathBuf {
+        self.dir.join("mints").join(format!("{cid}.json"))
+    }
+
+    /// Refund every mint whose contract never opened, once past its
+    /// timeout (a mint whose contract opened is the user's, never touched):
+    /// how many refunded.
+    pub fn refund_abandoned(&self, ctx: &dyn Ctx) -> Result<usize> {
+        let opened: Vec<u32> = ctx.contracts().iter().map(|(r, _)| r.cid()).collect();
+        let tip = self.rpc.height()?;
+        let timeout = u32::from(self.deployment.net.mint_timeout());
+        let mut n = 0;
+        for e in std::fs::read_dir(self.dir.join("mints"))? {
+            let path = e?.path();
+            let mut m: MintRecord = serde_json::from_slice(&std::fs::read(&path)?).with_context(|| format!("{}", path.display()))?;
+            if m.refund.is_some() || m.opened {
+                continue;
+            }
+            if opened.contains(&m.cid) {
+                m.opened = true;
+                lichen_proto::files::write_atomic(&path, &serde_json::to_vec_pretty(&m)?)?;
+                continue;
+            }
+            let txid = internal(&m.txid)?;
+            let Some((height, _)) = self.rpc.tx_block(&txid)? else { continue };
+            if tip < height + timeout {
+                continue;
+            }
+            let tx: elements::Transaction = elements::encode::deserialize(&self.rpc.tx(&txid)?)?;
+            let to: elements::Address = self.rpc.wallet_call("getnewaddress", serde_json::json!([]))?.as_str().context("an address")?.parse()?;
+            let genesis = self.rpc.block_hash(0)?.parse()?;
+            let refund = liquid::refund_tx(&tx, m.vout, m.secrets()?, &m.l2_address, &m.point, &self.return_secret, self.deployment.net, &to, 1_000, genesis)?;
+            let sent = self.rpc.call("sendrawtransaction", serde_json::json!([hex::encode(elements::encode::serialize(&refund))]))?;
+            ctx.note(format!("contract {}: its opening abandoned, the mint refunded: {}", m.cid, sent.as_str().unwrap_or_default()));
+            m.refund = Some(refund.txid().to_string());
+            lichen_proto::files::write_atomic(&path, &serde_json::to_vec_pretty(&m)?)?;
+            n += 1;
+        }
+        Ok(n)
     }
 
     /// The secret of the returns' key, before each contract's tweak.
@@ -161,9 +205,14 @@ impl HubL2 for LiquidHub {
     fn pricing(&self) -> Option<lichen_proto::Pricing> {
         Some(self.pricing)
     }
-    fn route(&self, _ctx: &dyn Ctx, _method: &Method, _path: &str, _body: &str) -> Option<Result<String>> {
-        // payments are Liquid's: the hub serves none
-        None
+    fn route(&self, ctx: &dyn Ctx, method: &Method, path: &str, _body: &str) -> Option<Result<String>> {
+        // payments are Liquid's: the hub serves none. `POST /liquid/refund`
+        // refunds abandoned mints past their timeout (for an operator or a
+        // timer: the hub also does it at each offer)
+        match (method, path) {
+            (Method::Post, "/liquid/refund") => Some(self.refund_abandoned(ctx).map(|n| serde_json::json!({ "refunded": n }).to_string())),
+            _ => None,
+        }
     }
 
     fn check_owner(&self, _ctx: &dyn Ctx, _owner: &Hash) -> Result<()> {
@@ -200,9 +249,33 @@ impl HubL2 for LiquidHub {
         let k = lexit_proto::keys(record)?;
         let sats = record.minted() - u64::from(fault == OpeningFault::ShortMint);
         let address = liquid::mint_address(&record.l2_address, mint_point, &self.deployment.hub, &k.alice.blinding, self.deployment.net)?;
+        if let Err(e) = self.refund_abandoned(ctx) {
+            ctx.note(format!("refunding abandoned mints: {e:#}"));
+        }
         let txid = self.rpc.wallet_call("sendtoaddress", serde_json::json!([address.to_string(), btc(sats)]))?;
         let txid = txid.as_str().context("the mint's txid")?.to_string();
         ctx.note(format!("contract {}: minted {sats} sats of L-BTC to the user, locked to the funding: {txid}", record.cid()));
+        // kept for its refund, should the funding never come: the output and
+        // its opening (the node's wallet made it, so knows its blinders)
+        let tx: elements::Transaction = elements::encode::deserialize(&self.rpc.tx(&internal(&txid)?)?)?;
+        let vout = tx.output.iter().position(|o| o.script_pubkey == address.script_pubkey()).context("the mint's output")? as u32;
+        let details = self.rpc.wallet_call("gettransaction", serde_json::json!([txid]))?;
+        let d = details["details"].as_array().into_iter().flatten().find(|d| d["vout"].as_u64() == Some(u64::from(vout))).context("the mint in the node wallet's details")?;
+        let m = MintRecord {
+            cid: record.cid(),
+            txid: txid.clone(),
+            vout,
+            l2_address: record.l2_address,
+            point: *mint_point,
+            value: sats,
+            asset: hex::encode(self.deployment.asset),
+            asset_blinder: d["assetblinder"].as_str().context("the mint's asset blinder")?.to_string(),
+            amount_blinder: d["amountblinder"].as_str().context("the mint's amount blinder")?.to_string(),
+            opened: false,
+            refund: None,
+        };
+        ensure_opens(&tx.output[vout as usize], &m.secrets()?)?;
+        lichen_proto::files::write_atomic(&self.mint_path(record.cid()), &serde_json::to_vec_pretty(&m)?)?;
         Ok(serde_json::json!({ "mint_txid": txid }))
     }
     fn funded(&self, _ctx: &dyn Ctx, _record: &Record) -> Result<()> {
@@ -302,4 +375,53 @@ pub type FrontGraph = HubProves;
 /// Where the hub keeps its Liquid keys, beside its contracts.
 pub fn liquid_dir(dir: &Path) -> PathBuf {
     dir.join("liquid")
+}
+
+/// A mint the hub paid: its output and opening, for its refund; whether
+/// its contract opened (then it is the user's), its refund if made.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct MintRecord {
+    cid: u32,
+    txid: String,
+    vout: u32,
+    #[serde(with = "lichen_babe::hexbytes::fixed")]
+    l2_address: Hash,
+    point: PublicKey,
+    value: u64,
+    /// The policy asset, internal order (hex).
+    asset: String,
+    /// The blinding factors as elementsd displays them.
+    asset_blinder: String,
+    amount_blinder: String,
+    opened: bool,
+    refund: Option<String>,
+}
+
+impl MintRecord {
+    fn secrets(&self) -> Result<elements::TxOutSecrets> {
+        let mut a: [u8; 32] = hex::decode(&self.asset)?.try_into().map_err(|_| anyhow::anyhow!("an asset id of 32 bytes"))?;
+        a.reverse();
+        Ok(elements::TxOutSecrets {
+            asset: hex::encode(a).parse()?,
+            asset_bf: self.asset_blinder.parse()?,
+            value: self.value,
+            value_bf: self.amount_blinder.parse()?,
+        })
+    }
+}
+
+/// That `secrets` open `o`'s commitments.
+fn ensure_opens(o: &elements::TxOut, s: &elements::TxOutSecrets) -> Result<()> {
+    let secp = elements::secp256k1_zkp::Secp256k1::new();
+    let a = elements::secp256k1_zkp::Generator::new_blinded(&secp, s.asset.into_tag(), s.asset_bf.into_inner());
+    let v = elements::secp256k1_zkp::PedersenCommitment::new(&secp, s.value, s.value_bf.into_inner(), a);
+    anyhow::ensure!(o.asset == elements::confidential::Asset::Confidential(a) && o.value == elements::confidential::Value::Confidential(v), "the node's blinders don't open the mint's output");
+    Ok(())
+}
+
+/// A txid as displayed into internal order.
+fn internal(s: &str) -> Result<Hash> {
+    let mut h: Hash = hex::decode(s)?.try_into().map_err(|_| anyhow::anyhow!("a txid of 32 bytes"))?;
+    h.reverse();
+    Ok(h)
 }

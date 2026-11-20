@@ -331,6 +331,60 @@ pub fn node_policy_asset(rpc: &Rpc) -> Result<Hash> {
     internal(rpc.call("getsidechaininfo", serde_json::json!([]))?["pegged_asset"].as_str().context("the node's pegged asset")?)
 }
 
+/// The hub's refund of a mint whose funding never came: the mint's output
+/// (`vout` of `mint_tx`, opened as `secrets`) spent by its refund leaf,
+/// after the timeout (the input's sequence), signed by the hub's key
+/// `hub_secret`; all of it but `fee` to `to`, blinded. The mint's tree is
+/// the contract's (its L2 address, the funding's adaptor point); `genesis`
+/// the chain's (Elements' sighash commits to it).
+#[allow(clippy::too_many_arguments)]
+pub fn refund_tx(
+    mint_tx: &elements::Transaction,
+    vout: u32,
+    secrets: elements::TxOutSecrets,
+    l2_address: &Hash,
+    mint_point: &PublicKey,
+    hub_secret: &bitcoin::secp256k1::SecretKey,
+    net: LiquidNet,
+    to: &elements::Address,
+    fee: u64,
+    genesis: elements::BlockHash,
+) -> Result<elements::Transaction> {
+    use elements::pset::{Input, Output, PartiallySignedTransaction};
+    use elements::secp256k1_zkp::{Keypair, Message, Secp256k1};
+    use elements::sighash::{Prevouts, SighashCache};
+    use elements::taproot::{LeafVersion, TapLeafHash};
+
+    let secp = Secp256k1::new();
+    let keypair = Keypair::from_seckey_slice(&secp, &hub_secret.secret_bytes())?;
+    let hub = keypair.x_only_public_key().0.serialize();
+    let timeout = net.mint_timeout();
+    let (_, info) = mint_tree(l2_address, mint_point, &hub, net)?;
+    let script = mint_refund_script(&hub, timeout);
+    let control = info.control_block(&(script.clone(), LeafVersion::default())).context("the refund leaf's control block")?;
+    let txout = mint_tx.output.get(vout as usize).context("no such output")?.clone();
+    ensure!(secrets.value > fee, "the mint, {} sats, doesn't cover the fee", secrets.value);
+
+    let mut pset = PartiallySignedTransaction::new_v2();
+    let mut input = Input::from_prevout(elements::OutPoint::new(mint_tx.txid(), vout));
+    input.witness_utxo = Some(txout.clone());
+    input.sequence = Some(elements::Sequence(u32::from(timeout)));
+    pset.add_input(input);
+    let blinder = to.blinding_pubkey.map(bitcoin::PublicKey::new);
+    let mut out = Output::new_explicit(to.script_pubkey(), secrets.value - fee, secrets.asset, blinder);
+    out.blinder_index = Some(0);
+    pset.add_output(out);
+    pset.add_output(Output::new_explicit(elements::Script::new(), fee, secrets.asset, None));
+    let inputs = std::collections::HashMap::from([(0usize, secrets)]);
+    pset.blind_last(&mut rand::thread_rng(), &secp, &inputs).map_err(|e| anyhow::anyhow!("blinding the refund: {e:?}"))?;
+    let mut tx = pset.extract_tx()?;
+    let leaf = TapLeafHash::from_script(&script, LeafVersion::default());
+    let hash = SighashCache::new(&tx).taproot_script_spend_signature_hash(0, &Prevouts::All(&[txout]), leaf, elements::SchnorrSighashType::Default, genesis)?;
+    let sig = secp.sign_schnorr(&Message::from_digest(hash.to_byte_array()), &keypair);
+    tx.input[0].witness.script_witness = vec![sig.serialize().to_vec(), script.into_bytes(), control.serialize()].into();
+    Ok(tx)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

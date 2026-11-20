@@ -296,7 +296,11 @@ impl WalletL2 for LiquidWallet {
         let spk = liquid::mint_address(&record.l2_address, &offer.mint_point, &d.hub, &blinder, d.net)?.script_pubkey();
         let mut waited = 0;
         loop {
-            if view.tx_block(&txid_internal(txid)?)?.is_some() {
+            if let Some((height, _)) = view.tx_block(&txid_internal(txid)?)? {
+                // fresh: the hub may take a mint back after its timeout, so
+                // she accepts with half of it to come at least
+                let age = view.height()?.saturating_sub(height);
+                ensure!(age < u32::from(d.net.mint_timeout()) / 2, "the mint {txid} is {age} Liquid blocks old: too near its refund");
                 break;
             }
             ensure!(waited < 600, "the mint {txid} isn't confirmed on Liquid after {waited} s");

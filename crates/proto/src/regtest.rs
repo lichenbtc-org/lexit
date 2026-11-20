@@ -170,13 +170,22 @@ impl ElementsRegtest {
 }
 
 /// `n` blocks on the node at `rpc`, signed by `federation` (for a thread of
-/// its own: [`ElementsRegtest::mine`]'s).
+/// its own: [`ElementsRegtest::mine`]'s). Another miner's block on the same
+/// template (a "duplicate", or a tip moved on) is tried again.
 pub fn mine_with(rpc: &Rpc, federation: &Federation, n: u32) -> Result<()> {
-    for _ in 0..n {
+    let mut made = 0;
+    let mut tries = 0;
+    while made < n {
+        tries += 1;
+        ensure!(tries < n + 1_000, "the node keeps refusing our blocks");
         let b = hex::decode(rpc.call("getnewblockhex", serde_json::json!([]))?.as_str().context("a block's hex")?)?;
         let signed = federation.sign_block(&b)?;
         let r = rpc.call("submitblock", serde_json::json!([hex::encode(signed)]))?;
-        ensure!(r.is_null(), "the node refused our block: {r}");
+        match r.as_str() {
+            None => made += 1,
+            Some("duplicate" | "inconclusive" | "duplicate-inconclusive" | "bad-prevblk" | "prev-blk-not-found") => {}
+            Some(other) => anyhow::bail!("the node refused our block: {other}"),
+        }
     }
     Ok(())
 }
