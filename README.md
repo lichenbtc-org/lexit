@@ -36,8 +36,8 @@ blocks, you can't exit until it restarts.
 
 ## Status
 
-Working end to end on test networks, as a command-line wallet and a
-Docker-deployed hub:
+Working end to end on test networks, with wallet apps for testers, a
+command-line wallet and a Docker-deployed hub:
 
 - the statement, built reproducibly (image id `8be84dc9…`), 3.8–5.2M cycles
   a ground; a dispute proved for real on regtest (the STARK on a Mac, the
@@ -46,15 +46,35 @@ Docker-deployed hub:
   contract there: opened, the mint swept, L-BTC returned, withdrawn
   cooperatively;
 - the hub's chores: abandoned openings' mints refunded after their
-  timeout, returns swept, its float watched.
+  timeout, returns swept, its float watched;
+- wallet apps for testnet: an Android app, a Mac app, and the same wallet
+  as a page in your browser (Mac and Linux), with the test hub built in
+  ([docs/APPS.md](docs/APPS.md)).
 
-Still to come: wallet apps (desktop and Android), a public hub endpoint,
-and the work before mainnet (an audit, RISC Zero's Groth16 setup with a
-contribution of our own).
+Still to come: the work before mainnet (an audit, RISC Zero's Groth16
+setup with a contribution of our own).
+
+## Try it on testnet
+
+A test hub runs on Mutinynet (Bitcoin, 30-second blocks) and Liquid
+testnet, none of it worth anything. The apps offer it in Settings as
+"Mutinynet · Liquid testnet", its key pinned; with the command line:
+`lexit --network mutinynet --hub https://thimbly.org/lichen/lexit/hub init`.
+
+| what | where |
+|---|---|
+| the hub | `https://thimbly.org/lichen/lexit/hub` (`GET /info`: its terms; `GET /liquid/float`: its L-BTC) |
+| its key | `bed862d5107ee01cc72aac32f7fa778d1310e4f498cb1c79bca52cb87f640f35` |
+| Bitcoin (Mutinynet) | Esplora `https://mutinynet.com/api`; explorer and faucet: mutinynet.com, faucet.mutinynet.com |
+| Liquid testnet | Esplora `https://blockstream.info/liquidtestnet/api`; Waterfalls `https://waterfalls.liquidwebwallet.org/liquidtestnet/api` (the wallet's L-BTC syncs through it); explorer blockstream.info/liquidtestnet; faucet liquidtestnet.com/faucet |
+
+The wallet reads both chains from these public servers by default; you
+run no node. How to try it, step by step: [docs/APPS.md](docs/APPS.md).
 
 ## Docs
 
-- [docs/USE_A_WALLET.md](docs/USE_A_WALLET.md): the `lexit` wallet
+- [docs/APPS.md](docs/APPS.md): the wallet apps (Android, Mac, the browser), and trying them
+- [docs/USE_A_WALLET.md](docs/USE_A_WALLET.md): the `lexit` wallet (command line)
 - [docs/RUN_A_HUB.md](docs/RUN_A_HUB.md): running a hub (`deploy/`)
 - [docs/CODE.md](docs/CODE.md): the crates and the tests
 
@@ -80,3 +100,4 @@ real; `LICHEN_HP_PROVER`).
 | `crates/wallet` | the wallet (`lexit`) |
 | `r0/` | the RISC Zero guest and its prover |
 | `deploy/` | the hub's deployment |
+| `gui/` | the wallet apps: `lexit-gui` (the page in your browser), the Tauri app (Android, desktop), `lexit-devstack` (a whole local deployment for developing them) |
