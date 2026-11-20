@@ -13,6 +13,11 @@ hasn't run end to end.
 cargo test --workspace
 ```
 
+The hub's tests run a regtest `bitcoind` (on the PATH, or
+`LICHEN_BITCOIND`) and an Elements chain of their own (`elementsd` 23.3,
+on the PATH or `LEXIT_ELEMENTSD`): a contract opened, folded, and exited
+against Liquid, about 90 s.
+
 | crate | what |
 |---|---|
 | `crates/elements` | what the statement reads of Liquid (no_std): dynafed headers and the federation's signatures, transactions, the Merkle root, confidential commitments opened |
