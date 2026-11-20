@@ -17,7 +17,7 @@ use bitcoin::Amount;
 use bitcoincore_rpc::{Auth, RpcApi};
 use lexit_elements::commit;
 use lexit_elements::tx::{self, Asset, Value};
-use lexit_hub::{Config, LiquidHub};
+use lexit_hub::{Config, LiquidHub, LiquidSource};
 use lexit_proto::liquid::{LiquidNet, LiquidView, Rpc};
 use lexit_proto::regtest::{mine_with, ElementsRegtest, Federation};
 use lexit_wallet::{LexitWallet as Wallet, LiquidWallet, Return};
@@ -113,12 +113,17 @@ impl Env {
         w
     }
 
-    /// A hub on bitcoind wallet `name` and Elements wallet `name` (each
-    /// funded), its config the tests' but for `f`'s changes; no fee.
+    /// A hub on bitcoind wallet `name`, its Liquid read from the node and
+    /// its L-BTC an LWK wallet (each funded), its config the tests' but for
+    /// `f`'s changes; no fee; its chores every second.
     pub fn hub(&self, name: &str, f: impl FnOnce(&mut Config)) -> Hub {
+        self.hub_with(name, 50_000_000, f)
+    }
+
+    /// [`Env::hub`] with `lbtc` sats of L-BTC.
+    pub fn hub_with(&self, name: &str, lbtc: u64, f: impl FnOnce(&mut Config)) -> Hub {
         self.rt.fund(&self.chain(name).new_spk().unwrap(), Amount::from_sat(100_000_000)).unwrap();
         self.rt.mine(1).unwrap();
-        let liquid = self.liquid_wallet(name, 50_000_000);
         let mut cfg = Config {
             network: lichen_proto::Net::Regtest,
             listen: "127.0.0.1:0".into(),
@@ -138,7 +143,16 @@ impl Env {
             first_cid: 1000,
         };
         f(&mut cfg);
-        let l2 = LiquidHub::open(&cfg.dir.join("liquid"), LiquidNet::Regtest, liquid, lichen_proto::Pricing::default()).unwrap();
+        let node = Rpc { wallet: String::new(), ..self.el.rpc.clone() };
+        let mut l2 = LiquidHub::open(&cfg.dir.join("liquid"), LiquidNet::Regtest, LiquidSource::Node(node), lichen_proto::Pricing::default()).unwrap();
+        l2.chores_every = Duration::from_secs(1);
+        if lbtc > 0 {
+            let address = l2.address().unwrap().to_string();
+            let txid = self.el.rpc.wallet_call("sendtoaddress", serde_json::json!([address, btc(lbtc)])).unwrap();
+            let txid = internal(txid.as_str().unwrap());
+            wait("the hub's L-BTC confirmed", || self.el.rpc.tx_block(&txid).unwrap().is_some());
+            wait("the hub sees its L-BTC", || l2.balance().unwrap() == lbtc);
+        }
         Hub::start(cfg, l2).unwrap()
     }
 

@@ -1,54 +1,79 @@
-//! Lexit's hub: a lichen hub (`lichen_hub`, which runs the
-//! contracts) that sells a guaranteed exit from L-BTC. It has no ledger:
-//! besides its Bitcoin node it runs an Elements node (elementsd, its
-//! wallet holding the hub's L-BTC), and touches Liquid only to mint and to
-//! take returns.
+//! Lexit's hub: a lichen hub (`lichen_hub`, which runs the contracts)
+//! that sells a guaranteed exit from L-BTC. It has no ledger and, in a
+//! test deployment, no Liquid node: it reads Liquid from an Esplora (every
+//! block it relies on is the federation's, signed; every transaction is
+//! tied to its block's root, so the Esplora can delay the hub but not
+//! mislead it), and holds its L-BTC in an LWK wallet of its own. A
+//! production hub may read and pay through its own elementsd instead
+//! ([`LiquidSource::Node`], as the regtest tests do).
 //!
 //! Its part of a contract ([`LiquidHub`], a [`HubL2`]):
 //!
 //! - the statement's terms: its deployment (the federation's block signing
-//!   script, its return and blinding keys), the checkpoint, the first
-//!   Liquid height, the drift; the contract's word `D` they make;
+//!   script, its return key), the checkpoint, the first Liquid height, the
+//!   drift; the contract's word `D` they make;
 //! - the mint, at the offer: `D − fee` L-BTC paid to the mint key behind
-//!   the funding's adaptor point, blinded to her blinding key;
+//!   the funding's adaptor point, blinded to a key of the hub's own for the
+//!   contract, its opening in the offer (her wallet checks it);
 //! - a cooperative withdrawal: her claim's returns checked on Liquid, then
 //!   lichen folds;
 //! - the dispute's front: when `request` confirms, the hub decides her
 //!   claim against Liquid. False: it proves the ground found
 //!   (`lexit_statement`) and lichen asserts. True: `request_timeout`
-//!   pays her, and the returns are the hub's.
+//!   pays her, and the returns are the hub's;
+//! - its chores ([`HubL2::tick`]): refunding abandoned openings' mints,
+//!   sweeping claimed returns once their contract has ended, watching its
+//!   float.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::{ensure, Context, Result};
 use bitcoin::secp256k1::{PublicKey, Secp256k1, SecretKey};
 use bitcoin::{OutPoint, Sequence, Txid};
+use lexit_proto::decide::{decide, Found};
+use lexit_proto::lbtc::{self, Purse};
+use lexit_proto::liquid::{self, Esplora, LiquidView, MintOpening, Rpc};
+use lexit_proto::{statement_outpoint, AliceKeys, Checkpoint, Deployment, HubProves, Keys, LiquidNet, SetupTerms};
+use lexit_statement::{Citation, Claim, HubInput};
 use lichen_contract::bit_tree;
 use lichen_hub::{Bits, Ctx, FrontStep, HubL2, ProverInput};
 use lichen_proto::hp::{Disputed, HpSetup, HpSetupRequest};
-use lichen_proto::{fresh_rho, Hash, Layer, OpenRequest, Record};
-use lexit_proto::decide::{decide, Found};
-use lexit_proto::liquid::{self, LiquidView, Rpc};
-use lexit_proto::{statement_outpoint, AliceKeys, Checkpoint, Deployment, HubProves, Keys, LiquidNet, SetupTerms};
-use lexit_statement::{Claim, HubInput};
+use lichen_proto::{files, fresh_rho, Hash, Layer, OpenRequest, Record};
+use sha2::{Digest, Sha256};
 use tiny_http::Method;
 
 pub use lichen_hub::{Config, Hub, OpeningFault};
 
-/// The hub on Liquid: its node, its deployment, its return key's secret,
-/// and each dispute's input once its claim is found false.
+/// Where the hub reads Liquid and keeps its L-BTC's history: an Esplora
+/// (a test deployment), or its own elementsd (production; the tests).
+pub enum LiquidSource {
+    Esplora(String),
+    Node(Rpc),
+}
+
+/// The hub on Liquid: its view of the chain, its L-BTC, its deployment,
+/// its return key's secret, each dispute's input once its claim is found
+/// false, and when it last did its chores.
 pub struct LiquidHub {
-    pub rpc: Rpc,
-    /// Where it keeps its mints (`mints/<cid>.json`), for their refunds.
+    view: Box<dyn LiquidView + Send + Sync>,
+    purse: Mutex<Purse>,
+    /// Its mints (`mints/<cid>.json`, for their refunds) and the claims it
+    /// took (`claims/<cid>.json`, for their returns' sweep).
     dir: PathBuf,
     pub deployment: Deployment,
     /// Its fee: a yearly rate on the L-BTC it pays out at an opening (`D`)
     /// and on the BTC it locks beyond it (the liquidity), for the term.
     pub pricing: lichen_proto::Pricing,
     return_secret: SecretKey,
+    genesis: elements::BlockHash,
     decided: Mutex<HashMap<u32, (String, HubInput)>>,
+    /// How often its chores run, and below what float it warns.
+    pub chores_every: Duration,
+    pub float_warn: u64,
+    last_chores: Mutex<Option<Instant>>,
 }
 
 /// A dispute's front at the hub: `request` confirmed at `at`; `holds` once
@@ -67,31 +92,101 @@ fn load_or_create(path: &Path) -> Result<SecretKey> {
     Ok(SecretKey::from_slice(&b)?)
 }
 
-/// An amount of sats as a decimal of BTC, as the node's RPC takes it.
-fn btc(sats: u64) -> String {
-    format!("{}.{:08}", sats / 100_000_000, sats % 100_000_000)
+/// A value kept in `path`, made by `make` on first use.
+fn load_or_create_with(path: &Path, make: impl FnOnce() -> Result<String>) -> Result<String> {
+    if !path.exists() {
+        std::fs::write(path, make()?)?;
+    }
+    Ok(std::fs::read_to_string(path)?.trim().to_string())
 }
 
 impl LiquidHub {
-    /// The hub on `net`, its node at `rpc`, its return key's secret in
-    /// `dir` (`liquid.key`), made on first start. The block signing script is the node's tip's.
-    pub fn open(dir: &Path, net: LiquidNet, rpc: Rpc, pricing: lichen_proto::Pricing) -> Result<LiquidHub> {
-        std::fs::create_dir_all(dir)?;
-        let return_secret = load_or_create(&dir.join("liquid.key"))?;
-        let secp = Secp256k1::signing_only();
-        let hub = return_secret.x_only_public_key(&secp).0.serialize();
-        let signblockscript = liquid::signblockscript(&rpc).context("the node's block signing script")?;
-        let asset = liquid::node_policy_asset(&rpc)?;
-        if let Some(a) = net.policy_asset() {
-            anyhow::ensure!(a == asset, "the node's policy asset isn't {net:?}'s L-BTC: another chain?");
-        }
-        let deployment = Deployment { net, asset, signblockscript, hub };
+    /// The hub on `net`, reading Liquid from `source`; its keys in `dir`,
+    /// made on first start (`liquid.key`, the return key's secret;
+    /// `mnemonic`, its L-BTC wallet's). The block signing script is the
+    /// tip's, as `source` shows it.
+    pub fn open(dir: &Path, net: LiquidNet, source: LiquidSource, pricing: lichen_proto::Pricing) -> Result<LiquidHub> {
         std::fs::create_dir_all(dir.join("mints"))?;
-        Ok(LiquidHub { rpc, dir: dir.to_path_buf(), deployment, pricing, return_secret, decided: Mutex::new(HashMap::new()) })
+        std::fs::create_dir_all(dir.join("claims"))?;
+        let return_secret = load_or_create(&dir.join("liquid.key"))?;
+        let hub = return_secret.x_only_public_key(&Secp256k1::signing_only()).0.serialize();
+        let (view, asset): (Box<dyn LiquidView + Send + Sync>, Hash) = match &source {
+            LiquidSource::Esplora(url) => (Box::new(Esplora { url: url.clone() }), net.policy_asset().context("an Esplora hub is on Liquid or its testnet (a regtest chain's asset is its node's)")?),
+            LiquidSource::Node(rpc) => {
+                let asset = liquid::node_policy_asset(rpc)?;
+                if let Some(a) = net.policy_asset() {
+                    ensure!(a == asset, "the node's policy asset isn't {net:?}'s L-BTC: another chain?");
+                }
+                (Box::new(rpc.clone()), asset)
+            }
+        };
+        let signblockscript = liquid::signblockscript(view.as_ref()).context("the tip's block signing script")?;
+        let genesis: elements::BlockHash = view.block_hash(0)?.parse()?;
+        let network = lbtc::network(net, &asset, Some(genesis))?;
+        let mnemonic = load_or_create_with(&dir.join("mnemonic"), || lbtc::new_mnemonic(network))?;
+        let backend = match source {
+            LiquidSource::Esplora(url) => lbtc::Backend::Esplora(Box::new(lwk_wollet::blocking::EsploraClient::new(&url, network)?)),
+            LiquidSource::Node(rpc) => {
+                let birth: u32 = load_or_create_with(&dir.join("birth"), || Ok(view.height()?.to_string()))?.parse()?;
+                lbtc::Backend::Node(Box::new(lbtc::NodeBackend::new(rpc, birth)))
+            }
+        };
+        let mut purse = Purse::new(&mnemonic, network, backend)?;
+        purse.sync()?;
+        let deployment = Deployment { net, asset, signblockscript, hub };
+        Ok(LiquidHub {
+            view,
+            purse: Mutex::new(purse),
+            dir: dir.to_path_buf(),
+            deployment,
+            pricing,
+            return_secret,
+            genesis,
+            decided: Mutex::new(HashMap::new()),
+            chores_every: Duration::from_secs(30),
+            float_warn: 1_000_000,
+            last_chores: Mutex::new(None),
+        })
+    }
+
+    /// An address to fund the hub's L-BTC at.
+    pub fn address(&self) -> Result<elements::Address> {
+        let mut p = self.purse.lock().unwrap();
+        p.sync()?;
+        p.address()
+    }
+
+    /// The hub's L-BTC, in sats.
+    pub fn balance(&self) -> Result<u64> {
+        let mut p = self.purse.lock().unwrap();
+        p.sync()?;
+        p.balance()
+    }
+
+    /// The key the hub blinds contract `cid`'s mint to: its own, so that it
+    /// can always open it.
+    fn mint_blinding(&self, cid: u32) -> Result<SecretKey> {
+        let k: [u8; 32] = Sha256::new().chain_update(b"lexit/mint-blinding").chain_update(self.return_secret.secret_bytes()).chain_update(cid.to_be_bytes()).finalize().into();
+        Ok(SecretKey::from_slice(&k)?)
     }
 
     fn mint_path(&self, cid: u32) -> PathBuf {
         self.dir.join("mints").join(format!("{cid}.json"))
+    }
+
+    fn records<T: serde::de::DeserializeOwned>(&self, kind: &str) -> Result<Vec<(PathBuf, T)>> {
+        let mut out = vec![];
+        for e in std::fs::read_dir(self.dir.join(kind))? {
+            let path = e?.path();
+            let r = serde_json::from_slice(&std::fs::read(&path)?).with_context(|| format!("{}", path.display()))?;
+            out.push((path, r));
+        }
+        Ok(out)
+    }
+
+    /// A transaction from Liquid.
+    fn tx(&self, txid: &str) -> Result<elements::Transaction> {
+        Ok(elements::encode::deserialize(&self.view.tx(&internal(txid)?)?)?)
     }
 
     /// Refund every mint whose contract never opened, once past its
@@ -99,36 +194,87 @@ impl LiquidHub {
     /// how many refunded.
     pub fn refund_abandoned(&self, ctx: &dyn Ctx) -> Result<usize> {
         let opened: Vec<u32> = ctx.contracts().iter().map(|(r, _)| r.cid()).collect();
-        let tip = self.rpc.height()?;
+        let tip = self.view.height()?;
         let timeout = u32::from(self.deployment.net.mint_timeout());
         let mut n = 0;
-        for e in std::fs::read_dir(self.dir.join("mints"))? {
-            let path = e?.path();
-            let mut m: MintRecord = serde_json::from_slice(&std::fs::read(&path)?).with_context(|| format!("{}", path.display()))?;
+        for (path, mut m) in self.records::<MintRecord>("mints")? {
             if m.refund.is_some() || m.opened {
                 continue;
             }
             if opened.contains(&m.cid) {
                 m.opened = true;
-                lichen_proto::files::write_atomic(&path, &serde_json::to_vec_pretty(&m)?)?;
+                files::write_atomic(&path, &serde_json::to_vec_pretty(&m)?)?;
                 continue;
             }
-            let txid = internal(&m.txid)?;
-            let Some((height, _)) = self.rpc.tx_block(&txid)? else { continue };
+            let Some((height, _)) = self.view.tx_block(&internal(&m.opening.txid)?)? else { continue };
             if tip < height + timeout {
                 continue;
             }
-            let tx: elements::Transaction = elements::encode::deserialize(&self.rpc.tx(&txid)?)?;
-            let to: elements::Address = self.rpc.wallet_call("getnewaddress", serde_json::json!([]))?.as_str().context("an address")?.parse()?;
-            let genesis = self.rpc.block_hash(0)?.parse()?;
-            let refund = liquid::refund_tx(&tx, m.vout, m.secrets()?, &m.l2_address, &m.point, &self.return_secret, self.deployment.net, &to, 1_000, genesis)?;
-            let sent = self.rpc.call("sendrawtransaction", serde_json::json!([hex::encode(elements::encode::serialize(&refund))]))?;
-            ctx.note(format!("contract {}: its opening abandoned, the mint refunded: {}", m.cid, sent.as_str().unwrap_or_default()));
+            let tx = self.tx(&m.opening.txid)?;
+            let mut purse = self.purse.lock().unwrap();
+            purse.sync()?;
+            let to = purse.address()?;
+            let refund = liquid::refund_tx(&tx, m.opening.vout, m.opening.secrets(&self.deployment.asset)?, &m.l2_address, &m.point, &self.return_secret, self.deployment.net, &to, 1_000, self.genesis)?;
+            purse.backend.broadcast(&refund)?;
+            ctx.note(format!("contract {}: its opening abandoned, the mint refunded: {}", m.cid, refund.txid()));
             m.refund = Some(refund.txid().to_string());
-            lichen_proto::files::write_atomic(&path, &serde_json::to_vec_pretty(&m)?)?;
+            files::write_atomic(&path, &serde_json::to_vec_pretty(&m)?)?;
             n += 1;
         }
         Ok(n)
+    }
+
+    /// Keep a claim the hub took (a fold's, or an exit's that held), for its
+    /// returns' sweep once the contract has ended.
+    fn keep_claim(&self, cid: u32, claim: &Claim) -> Result<()> {
+        let path = self.dir.join("claims").join(format!("{cid}.json"));
+        if path.exists() {
+            return Ok(());
+        }
+        let c = ClaimRecord { cid, cited: claim.cited.iter().map(CitedReturn::of).collect(), swept: None };
+        Ok(files::write_atomic(&path, &serde_json::to_vec_pretty(&c)?)?)
+    }
+
+    /// Sweep the returns of each claim taken whose contract has ended into
+    /// the hub's L-BTC: how many claims swept.
+    pub fn sweep_returns(&self, ctx: &dyn Ctx) -> Result<usize> {
+        let ended: HashMap<u32, Record> = ctx.contracts().into_iter().filter(|(_, closed)| *closed).map(|(r, _)| (r.cid(), r)).collect();
+        let secp = elements::secp256k1_zkp::Secp256k1::new();
+        let mut n = 0;
+        for (path, mut c) in self.records::<ClaimRecord>("claims")? {
+            let Some(record) = ended.get(&c.cid).filter(|_| c.swept.is_none()) else { continue };
+            let d = lexit_proto::keys(record)?.terms.d;
+            let q = liquid::return_secret(&self.return_secret, &d, c.cid)?;
+            let keypair = elements::secp256k1_zkp::Keypair::from_seckey_slice(&secp, &q.secret_bytes())?;
+            let mut inputs = vec![];
+            for r in &c.cited {
+                let hash = self.view.block_hash(r.height)?;
+                let txid = *self.view.txids(&hash)?.get(r.index as usize).context("a cited transaction")?;
+                let tx: elements::Transaction = elements::encode::deserialize(&self.view.tx(&txid)?)?;
+                let o = tx.output.get(r.vout as usize).context("a cited output")?.clone();
+                let secrets = liquid::secrets_of(&o, &self.deployment.asset, r.value, &hash32(&r.r_a)?, &hash32(&r.r_v)?)?;
+                inputs.push((elements::OutPoint::new(tx.txid(), r.vout), o, secrets, keypair));
+            }
+            let mut purse = self.purse.lock().unwrap();
+            purse.sync()?;
+            let swept = purse.sweep(inputs)?;
+            ctx.note(format!("contract {}: its returns swept into the hub's L-BTC: {}", c.cid, swept.txid()));
+            c.swept = Some(swept.txid().to_string());
+            files::write_atomic(&path, &serde_json::to_vec_pretty(&c)?)?;
+            n += 1;
+        }
+        Ok(n)
+    }
+
+    /// The hub's float: its L-BTC, the mints outstanding (paid, their
+    /// contract not yet open, not refunded), and its exposure (the caps of
+    /// its open contracts: L-BTC it may have to take back for BTC).
+    pub fn float(&self, ctx: &dyn Ctx) -> Result<serde_json::Value> {
+        let balance = self.balance()?;
+        let address = self.address()?.to_string();
+        let outstanding: u64 = self.records::<MintRecord>("mints")?.into_iter().filter(|(_, m)| !m.opened && m.refund.is_none()).map(|(_, m)| m.opening.value).sum();
+        let exposure: u64 = ctx.contracts().iter().filter(|(_, closed)| !closed).map(|(r, _)| r.terms.v_max().to_sat()).sum();
+        Ok(serde_json::json!({ "balance": balance, "address": address, "outstanding_mints": outstanding, "exposure": exposure }))
     }
 
     /// The secret of the returns' key, before each contract's tweak.
@@ -151,7 +297,7 @@ impl LiquidHub {
         let funding = chain.get_tx(&record.funding.txid).context("the funding")?;
         let request = lexit_proto::exit::request_proof(chain, &funding, &req_id)?;
         let req_time = u32::from_le_bytes(request.header[68..72].try_into().unwrap());
-        let found = decide(&self.rpc, &terms, cid, &deposit, b, &e, &posted, req_time)?;
+        let found = decide(self.view.as_ref(), &terms, cid, &deposit, b, &e, &posted, req_time)?;
         let Found::False(ground, why) = found else { return Ok((found, None)) };
         let req_block = lexit_statement::btc::Header(request.header).hash();
         let headers = match lexit_proto::headers_for(chain, &req_block, terms.work) {
@@ -206,22 +352,46 @@ impl HubL2 for LiquidHub {
         Some(self.pricing)
     }
     fn route(&self, ctx: &dyn Ctx, method: &Method, path: &str, _body: &str) -> Option<Result<String>> {
-        // payments are Liquid's: the hub serves none. `POST /liquid/refund`
-        // refunds abandoned mints past their timeout (for an operator or a
-        // timer: the hub also does it at each offer)
+        // payments are Liquid's: the hub serves none. Its float, and its
+        // chores on demand (they also run on their own: `tick`)
         match (method, path) {
+            (Method::Get, "/liquid/float") => Some(self.float(ctx).map(|v| v.to_string())),
             (Method::Post, "/liquid/refund") => Some(self.refund_abandoned(ctx).map(|n| serde_json::json!({ "refunded": n }).to_string())),
+            (Method::Post, "/liquid/sweep") => Some(self.sweep_returns(ctx).map(|n| serde_json::json!({ "swept": n }).to_string())),
             _ => None,
         }
+    }
+    fn tick(&self, ctx: &dyn Ctx) -> Result<()> {
+        {
+            let mut last = self.last_chores.lock().unwrap();
+            if last.is_some_and(|t| t.elapsed() < self.chores_every) {
+                return Ok(());
+            }
+            *last = Some(Instant::now());
+        }
+        let refunded = self.refund_abandoned(ctx);
+        let swept = self.sweep_returns(ctx);
+        let balance = self.balance();
+        if let Ok(b) = &balance {
+            if *b < self.float_warn {
+                ctx.note_once(format!("the hub's L-BTC is low: {b} sats (below {}); fund {}", self.float_warn, self.address().map(|a| a.to_string()).unwrap_or_default()));
+            }
+        }
+        refunded.and(swept).and(balance).map(|_| ())
     }
 
     fn check_owner(&self, _ctx: &dyn Ctx, _owner: &Hash) -> Result<()> {
         Ok(())
     }
     fn setup_terms(&self, ctx: &dyn Ctx, req: &HpSetupRequest) -> Result<serde_json::Value> {
+        // the float first: L-BTC for the mint, at most the deposit coin
+        // (D, her reserve and fee budget), before any work on the setup
+        let coin = ctx.chain().get_tx(&req.deposit.txid).and_then(|t| t.output.get(req.deposit.vout as usize).map(|o| o.value.to_sat())).context("the deposit coin")?;
+        let balance = self.balance()?;
+        ensure!(balance >= coin, "the hub's L-BTC ({balance} sats) can't mint this contract now; try another hub, or later");
         // fixed now: the checkpoint the Bitcoin tip, the first height
         // Liquid's tip (no return before the contract counts)
-        let mut t = SetupTerms { deployment: self.deployment.clone(), checkpoint: Checkpoint::tip(ctx.chain())?, from: self.rpc.height()?, drift: self.deployment.net.drift(), d: [0; 32] };
+        let mut t = SetupTerms { deployment: self.deployment.clone(), checkpoint: Checkpoint::tip(ctx.chain())?, from: self.view.height()?, drift: self.deployment.net.drift(), d: [0; 32] };
         t.d = t.terms(bitcoin::Amount::from_sat(req.unit)).d();
         Ok(serde_json::to_value(t)?)
     }
@@ -245,38 +415,26 @@ impl HubL2 for LiquidHub {
     fn offered(&self, ctx: &dyn Ctx, record: &Record, mint_point: &PublicKey, fault: OpeningFault) -> Result<serde_json::Value> {
         // D − fee of L-BTC, paid now to a key she can spend once this
         // funding is out (the hub's again after the mint's timeout, if it
-        // never is), blinded to her key
-        let k = lexit_proto::keys(record)?;
+        // never is), blinded to a key of the hub's, its opening in the offer
+        let cid = record.cid();
         let sats = record.minted() - u64::from(fault == OpeningFault::ShortMint);
-        let address = liquid::mint_address(&record.l2_address, mint_point, &self.deployment.hub, &k.alice.blinding, self.deployment.net)?;
-        if let Err(e) = self.refund_abandoned(ctx) {
-            ctx.note(format!("refunding abandoned mints: {e:#}"));
-        }
-        let txid = self.rpc.wallet_call("sendtoaddress", serde_json::json!([address.to_string(), btc(sats)]))?;
-        let txid = txid.as_str().context("the mint's txid")?.to_string();
-        ctx.note(format!("contract {}: minted {sats} sats of L-BTC to the user, locked to the funding: {txid}", record.cid()));
-        // kept for its refund, should the funding never come: the output and
-        // its opening (the node's wallet made it, so knows its blinders)
-        let tx: elements::Transaction = elements::encode::deserialize(&self.rpc.tx(&internal(&txid)?)?)?;
-        let vout = tx.output.iter().position(|o| o.script_pubkey == address.script_pubkey()).context("the mint's output")? as u32;
-        let details = self.rpc.wallet_call("gettransaction", serde_json::json!([txid]))?;
-        let d = details["details"].as_array().into_iter().flatten().find(|d| d["vout"].as_u64() == Some(u64::from(vout))).context("the mint in the node wallet's details")?;
-        let m = MintRecord {
-            cid: record.cid(),
-            txid: txid.clone(),
-            vout,
-            l2_address: record.l2_address,
-            point: *mint_point,
-            value: sats,
-            asset: hex::encode(self.deployment.asset),
-            asset_blinder: d["assetblinder"].as_str().context("the mint's asset blinder")?.to_string(),
-            amount_blinder: d["amountblinder"].as_str().context("the mint's amount blinder")?.to_string(),
-            opened: false,
-            refund: None,
+        let blinding = self.mint_blinding(cid)?;
+        let blinder = PublicKey::from_secret_key(&Secp256k1::signing_only(), &blinding);
+        let d = &self.deployment;
+        let address = liquid::mint_address(&record.l2_address, mint_point, &d.hub, &blinder, d.net)?;
+        let tx = {
+            let mut purse = self.purse.lock().unwrap();
+            purse.sync()?;
+            purse.send(&address, sats)?
         };
-        ensure_opens(&tx.output[vout as usize], &m.secrets()?)?;
-        lichen_proto::files::write_atomic(&self.mint_path(record.cid()), &serde_json::to_vec_pretty(&m)?)?;
-        Ok(serde_json::json!({ "mint_txid": txid }))
+        let vout = tx.output.iter().position(|o| o.script_pubkey == address.script_pubkey()).context("the mint's output")? as u32;
+        let (value, _, _, secrets) = lbtc::open(&tx, vout, &blinding.secret_bytes(), &liquid::generator(&d.asset))?;
+        let opening = MintOpening { txid: tx.txid().to_string(), vout, value, asset_bf: secrets.asset_bf.to_string(), value_bf: secrets.value_bf.to_string() };
+        ensure!(liquid::opens(&tx.output[vout as usize], &opening.secrets(&d.asset)?), "the mint's opening doesn't open it");
+        ctx.note(format!("contract {cid}: minted {sats} sats of L-BTC to the user, locked to the funding: {}", opening.txid));
+        let m = MintRecord { cid, l2_address: record.l2_address, point: *mint_point, opening: opening.clone(), opened: false, refund: None };
+        files::write_atomic(&self.mint_path(cid), &serde_json::to_vec_pretty(&m)?)?;
+        Ok(serde_json::json!({ "mint": opening }))
     }
     fn funded(&self, _ctx: &dyn Ctx, _record: &Record) -> Result<()> {
         Ok(())
@@ -291,10 +449,10 @@ impl HubL2 for LiquidHub {
         let cl = Claim::from_bytes(&posted).map_err(|r| anyhow::anyhow!("the claim: {r:?}"))?;
         let e = cl.fingerprint(cid, &deposit, b);
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs() as u32;
-        match decide(&self.rpc, &terms, cid, &deposit, b, &e, &posted, now)? {
+        match decide(self.view.as_ref(), &terms, cid, &deposit, b, &e, &posted, now)? {
             Found::Holds => {
                 ctx.note(format!("contract {cid}: the user's returns of {b} units checked on Liquid"));
-                Ok(())
+                self.keep_claim(cid, &cl)
             }
             Found::False(_, why) => anyhow::bail!("the claim is false: {why}"),
             Found::Wait(why) => anyhow::bail!("not yet: {why}"),
@@ -330,6 +488,11 @@ impl HubL2 for LiquidHub {
             (Found::Holds, _) if ctx.forging() => Ok(FrontStep::Prove { at: s.at }),
             (Found::Holds, _) => {
                 ctx.note(format!("contract {cid}: the user's exit claim holds: no assertion; request_timeout will pay her, and her returns are the hub's"));
+                let req = lexit_proto::link(ctx.chain(), d, "request")?;
+                let (_, _, posted) = lexit_proto::requested(&req)?;
+                if let Ok(cl) = Claim::from_bytes(&posted) {
+                    self.keep_claim(cid, &cl)?;
+                }
                 Ok(FrontStep::Wait(Front { at: s.at, holds: true }))
             }
             (Found::False(_, why), Some(input)) => {
@@ -382,46 +545,46 @@ pub fn liquid_dir(dir: &Path) -> PathBuf {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 struct MintRecord {
     cid: u32,
-    txid: String,
-    vout: u32,
     #[serde(with = "lichen_babe::hexbytes::fixed")]
     l2_address: Hash,
     point: PublicKey,
-    value: u64,
-    /// The policy asset, internal order (hex).
-    asset: String,
-    /// The blinding factors as elementsd displays them.
-    asset_blinder: String,
-    amount_blinder: String,
+    opening: MintOpening,
     opened: bool,
     refund: Option<String>,
 }
 
-impl MintRecord {
-    fn secrets(&self) -> Result<elements::TxOutSecrets> {
-        let mut a: [u8; 32] = hex::decode(&self.asset)?.try_into().map_err(|_| anyhow::anyhow!("an asset id of 32 bytes"))?;
-        a.reverse();
-        Ok(elements::TxOutSecrets {
-            asset: hex::encode(a).parse()?,
-            asset_bf: self.asset_blinder.parse()?,
-            value: self.value,
-            value_bf: self.amount_blinder.parse()?,
-        })
+/// A return a claim cited, as kept for its sweep.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct CitedReturn {
+    height: u32,
+    index: u32,
+    vout: u32,
+    value: u64,
+    r_a: String,
+    r_v: String,
+}
+
+impl CitedReturn {
+    fn of(c: &Citation) -> CitedReturn {
+        CitedReturn { height: c.height, index: c.index, vout: c.vout, value: c.value, r_a: hex::encode(c.r_a), r_v: hex::encode(c.r_v) }
     }
 }
 
-/// That `secrets` open `o`'s commitments.
-fn ensure_opens(o: &elements::TxOut, s: &elements::TxOutSecrets) -> Result<()> {
-    let secp = elements::secp256k1_zkp::Secp256k1::new();
-    let a = elements::secp256k1_zkp::Generator::new_blinded(&secp, s.asset.into_tag(), s.asset_bf.into_inner());
-    let v = elements::secp256k1_zkp::PedersenCommitment::new(&secp, s.value, s.value_bf.into_inner(), a);
-    anyhow::ensure!(o.asset == elements::confidential::Asset::Confidential(a) && o.value == elements::confidential::Value::Confidential(v), "the node's blinders don't open the mint's output");
-    Ok(())
+/// A claim the hub took: its returns, and their sweep if made.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct ClaimRecord {
+    cid: u32,
+    cited: Vec<CitedReturn>,
+    swept: Option<String>,
+}
+
+fn hash32(s: &str) -> Result<[u8; 32]> {
+    hex::decode(s)?.try_into().map_err(|_| anyhow::anyhow!("32 bytes, hex"))
 }
 
 /// A txid as displayed into internal order.
 fn internal(s: &str) -> Result<Hash> {
-    let mut h: Hash = hex::decode(s)?.try_into().map_err(|_| anyhow::anyhow!("a txid of 32 bytes"))?;
+    let mut h = hash32(s)?;
     h.reverse();
     Ok(h)
 }

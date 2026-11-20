@@ -18,6 +18,7 @@
 pub mod decide;
 pub mod exit;
 pub mod front;
+pub mod lbtc;
 pub mod liquid;
 pub mod regtest;
 

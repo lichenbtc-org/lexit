@@ -385,6 +385,90 @@ pub fn refund_tx(
     Ok(tx)
 }
 
+/// Whether `s` opens `o`'s commitments (its asset and value, blinded).
+pub fn opens(o: &elements::TxOut, s: &elements::TxOutSecrets) -> bool {
+    let secp = elements::secp256k1_zkp::Secp256k1::new();
+    let a = elements::secp256k1_zkp::Generator::new_blinded(&secp, s.asset.into_tag(), s.asset_bf.into_inner());
+    let v = elements::secp256k1_zkp::PedersenCommitment::new(&secp, s.value, s.value_bf.into_inner(), a);
+    o.asset == elements::confidential::Asset::Confidential(a) && o.value == elements::confidential::Value::Confidential(v)
+}
+
+/// The opening of `o` as a claim cites it (its value; its blinding factors
+/// as big-endian scalars), of asset `asset` (internal order), checked to
+/// open its commitments.
+pub fn secrets_of(o: &elements::TxOut, asset: &Hash, value: u64, r_a: &[u8; 32], r_v: &[u8; 32]) -> Result<elements::TxOutSecrets> {
+    let mut a = *asset;
+    a.reverse();
+    let asset: elements::AssetId = hex::encode(a).parse()?;
+    for reverse in [false, true] {
+        let (mut ra, mut rv) = (*r_a, *r_v);
+        if reverse {
+            ra.reverse();
+            rv.reverse();
+        }
+        let s = elements::TxOutSecrets {
+            asset,
+            asset_bf: elements::confidential::AssetBlindingFactor::from_slice(&ra)?,
+            value,
+            value_bf: elements::confidential::ValueBlindingFactor::from_slice(&rv)?,
+        };
+        if opens(o, &s) {
+            return Ok(s);
+        }
+    }
+    bail!("the opening doesn't open the output")
+}
+
+/// The secret of contract `c`'s return key ([`lexit_statement::return_key`]):
+/// the hub's secret, its key's parity made even, tweaked; checked to be the
+/// key's.
+pub fn return_secret(hub_secret: &bitcoin::secp256k1::SecretKey, d: &Hash, c: u32) -> Result<bitcoin::secp256k1::SecretKey> {
+    let secp = Secp256k1::signing_only();
+    let (x, parity) = hub_secret.x_only_public_key(&secp);
+    let hub = x.serialize();
+    let mut t = Sha256::new();
+    t.update(b"lexit/return");
+    t.update(hub);
+    t.update(d);
+    t.update(c.to_be_bytes());
+    let t: [u8; 32] = t.finalize().into();
+    let h = if parity == bitcoin::secp256k1::Parity::Odd { hub_secret.negate() } else { *hub_secret };
+    let q = h.add_tweak(&bitcoin::secp256k1::Scalar::from_be_bytes(t)?)?;
+    let want = lexit_statement::return_key(&hub, d, c).context("the hub's key isn't a key")?;
+    ensure!(q.x_only_public_key(&secp).0.serialize() == want, "the return secret isn't the return key's");
+    Ok(q)
+}
+
+/// The mint's script ([`mint_tree`]): what its address pays, whatever its
+/// blinding key.
+pub fn mint_spk(l2_address: &Hash, mint_point: &PublicKey, hub: &Hash, net: LiquidNet) -> Result<elements::Script> {
+    let secp = elements::secp256k1_zkp::Secp256k1::verification_only();
+    let (p, info) = mint_tree(l2_address, mint_point, hub, net)?;
+    Ok(elements::Address::p2tr(&secp, p, info.merkle_root(), None, net.address_params()).script_pubkey())
+}
+
+/// A mint as the offer names it: its output and its opening (the hub
+/// blinds it to a key of its own, so that it can always open it, and tells
+/// her the opening; her wallet checks it opens the output).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MintOpening {
+    pub txid: String,
+    pub vout: u32,
+    pub value: u64,
+    /// The blinding factors, as rust-elements shows them.
+    pub asset_bf: String,
+    pub value_bf: String,
+}
+
+impl MintOpening {
+    /// The opening, of asset `asset` (internal order).
+    pub fn secrets(&self, asset: &Hash) -> Result<elements::TxOutSecrets> {
+        let mut a = *asset;
+        a.reverse();
+        Ok(elements::TxOutSecrets { asset: hex::encode(a).parse()?, asset_bf: self.asset_bf.parse()?, value: self.value, value_bf: self.value_bf.parse()? })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

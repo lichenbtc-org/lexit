@@ -4,7 +4,8 @@
 //! funding shows `t` sweeps it into its own L-BTC, an LWK wallet); she
 //! returns L-BTC from it to her contract's return address, her wallet
 //! opening and recording the return; the hub checks it on Liquid and
-//! folds: BTC for her L-BTC.
+//! folds: BTC for her L-BTC. Its chores then sweep the return into its own
+//! L-BTC.
 
 mod common;
 
@@ -21,12 +22,12 @@ fn a_contract_opens_with_a_mint_and_folds_against_a_return() {
     let held = env.mining(|| w.open_contract(&hub.url, &ch, &statement(), ask, ch.new_spk().unwrap(), &pay)).unwrap();
     let cid = held.record.cid();
     let mint = w.l2.mints.iter().find(|m| m.cid == cid).expect("the mint's key kept").clone();
-    assert_eq!(mint.value, held.record.minted());
+    assert_eq!(mint.opening.value, held.record.minted());
     assert!(hub.log().iter().any(|l| l.contains(&format!("contract {cid}: minted"))));
     assert!(mint.swept.is_some(), "the mint swept at the opening");
     // at once, unconfirmed (as an Esplora shows it): her L-BTC can pay
     let balance = w.l2.lbtc_balance().unwrap();
-    assert!(balance <= mint.value && balance > mint.value - 1_000, "the mint, less the sweep's fee: {balance}");
+    assert!(balance <= mint.opening.value && balance > mint.opening.value - 1_000, "the mint, less the sweep's fee: {balance}");
 
     // a return, from her L-BTC: opened and recorded by her wallet
     let r = lexit_wallet::pay_return(&mut w, cid, 150_000).unwrap();
@@ -37,4 +38,6 @@ fn a_contract_opens_with_a_mint_and_folds_against_a_return() {
     println!("LEXIT alice: the fold {fold}");
     assert!(hub.log().iter().any(|l| l.contains(&format!("contract {cid}: the user's returns"))), "the hub checked the return on Liquid");
     wait("the contract closed", || w.contracts.iter().any(|h| h.record.cid() == cid && h.closed.is_some()));
+    // the hub's chores: her return swept into its L-BTC, the contract over
+    wait("the return swept", || hub.log().iter().any(|l| l.contains(&format!("contract {cid}: its returns swept into the hub's L-BTC"))));
 }

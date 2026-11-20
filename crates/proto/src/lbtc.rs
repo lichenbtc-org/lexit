@@ -1,5 +1,6 @@
-//! The wallet's L-BTC: an LWK wallet ([`Purse`]: a single-sig CT descriptor,
-//! `elwpkh` with a SLIP-77 blinding key, from the wallet's own mnemonic),
+//! L-BTC held by a party, the user's wallet or the hub: an LWK wallet
+//! ([`Purse`]: a single-sig CT descriptor, `elwpkh` with a SLIP-77 blinding
+//! key, from its own mnemonic),
 //! synced from Liquid's Esplora (LWK's client) or from a node
 //! ([`NodeBackend`]: elementsd over RPC, the chain indexed here by script,
 //! for regtest and for users who run a node).
@@ -25,7 +26,7 @@ use lwk_wollet::elements::sighash::{Prevouts, SighashCache};
 use lwk_wollet::elements::{Address, AssetId, BlockHash, BlockHeader, OutPoint, SchnorrSighashType, Script, Transaction, TxOut, TxOutSecrets, Txid};
 use lwk_wollet::{ExternalUtxo, History, Wollet, WolletDescriptor};
 
-use lexit_proto::liquid::{LiquidNet, Rpc};
+use crate::liquid::{LiquidNet, Rpc};
 
 /// LWK's network for a deployment: Liquid's and its testnet's are fixed; a
 /// regtest chain's are its policy asset and genesis.
@@ -207,7 +208,7 @@ impl Backend {
             }
         })
     }
-    fn broadcast(&self, tx: &Transaction) -> Result<Txid> {
+    pub fn broadcast(&self, tx: &Transaction) -> Result<Txid> {
         Ok(match self {
             Backend::Esplora(c) => c.broadcast(tx)?,
             Backend::Node(n) => n.broadcast(tx)?,
@@ -255,23 +256,32 @@ impl Purse {
         self.sign_finish(&mut pset)
     }
 
-    /// Sweep an output of ours that isn't the wallet's: a Taproot key-path
-    /// spend of `outpoint` (`txout`, opened as `secrets`) by `keypair` (the
-    /// internal key's), its tree's root `merkle_root`; everything to the
-    /// wallet.
-    pub fn sweep(&mut self, outpoint: OutPoint, txout: TxOut, secrets: TxOutSecrets, keypair: &Keypair, merkle_root: Option<lwk_wollet::elements::taproot::TapNodeHash>) -> Result<Transaction> {
-        let utxo = ExternalUtxo { outpoint, txout, tx: None, unblinded: secrets, max_weight_to_satisfy: 66 };
-        let mut pset = self.wollet.tx_builder().add_external_utxos(vec![utxo])?.drain_lbtc_wallet().finish()?;
-        let i = pset.inputs().iter().position(|i| i.previous_txid == outpoint.txid && i.previous_output_index == outpoint.vout).context("the swept output among the inputs")?;
+    /// Sweep outputs of ours that aren't the wallet's, each a Taproot
+    /// key-path spend by its keypair (the output key's: already tweaked,
+    /// for a key with a tree), each given with its output and its opening:
+    /// everything to the wallet, the fee out of it.
+    pub fn sweep(&mut self, inputs: Vec<(OutPoint, TxOut, TxOutSecrets, Keypair)>) -> Result<Transaction> {
+        ensure!(!inputs.is_empty(), "nothing to sweep");
+        let utxos = inputs.iter().map(|(outpoint, txout, secrets, _)| ExternalUtxo { outpoint: *outpoint, txout: txout.clone(), tx: None, unblinded: *secrets, max_weight_to_satisfy: 66 }).collect();
+        let mut pset = self.wollet.tx_builder().add_external_utxos(utxos)?.drain_lbtc_wallet().finish()?;
         let secp = Secp256k1::new();
-        let tweaked = keypair.tap_tweak(&secp, merkle_root);
         let prevouts: Vec<TxOut> = pset.inputs().iter().map(|i| i.witness_utxo.clone().context("an input's previous output")).collect::<Result<_>>()?;
         let tx = pset.extract_tx()?;
         let genesis = self.network.genesis_hash();
-        let hash = SighashCache::new(&tx).taproot_key_spend_signature_hash(i, &Prevouts::All(&prevouts), SchnorrSighashType::Default, genesis)?;
-        let sig = secp.sign_schnorr(&Message::from_digest(hash.to_byte_array()), &tweaked.to_inner());
-        pset.inputs_mut()[i].tap_key_sig = Some(lwk_wollet::elements::SchnorrSig { sig, hash_ty: SchnorrSighashType::Default });
+        let mut cache = SighashCache::new(&tx);
+        for (outpoint, _, _, keypair) in &inputs {
+            let i = pset.inputs().iter().position(|i| i.previous_txid == outpoint.txid && i.previous_output_index == outpoint.vout).context("a swept output among the inputs")?;
+            let hash = cache.taproot_key_spend_signature_hash(i, &Prevouts::All(&prevouts), SchnorrSighashType::Default, genesis)?;
+            let sig = secp.sign_schnorr(&Message::from_digest(hash.to_byte_array()), keypair);
+            pset.inputs_mut()[i].tap_key_sig = Some(lwk_wollet::elements::SchnorrSig { sig, hash_ty: SchnorrSighashType::Default });
+        }
         self.sign_finish(&mut pset)
+    }
+
+    /// A key-path keypair for an output with a tree: `keypair` (the
+    /// internal key's) tweaked by the tree's root.
+    pub fn tweaked(keypair: &Keypair, merkle_root: Option<lwk_wollet::elements::taproot::TapNodeHash>) -> Keypair {
+        keypair.tap_tweak(&Secp256k1::new(), merkle_root).to_inner()
     }
 
     /// The wallet's inputs signed, finalized, broadcast, and applied.

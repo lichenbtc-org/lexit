@@ -38,14 +38,14 @@ lexit-statement = { path = "crates/statement" }
 lexit-proto = { path = "crates/proto" }
 lexit-hub = { path = "crates/hub" }
 lexit-wallet = { path = "crates/wallet" }
-# lichen, the base (lichenbtc-org/lichen), at master 0224b0f: its pricing
-# (a fee by capital and time, HubL2::pricing)
-lichen-contract = { git = "https://github.com/lichenbtc-org/lichen", rev = "0224b0f902df2c8a1a97c133c7dfa57c56c17f4b" }
-lichen-chain = { git = "https://github.com/lichenbtc-org/lichen", rev = "0224b0f902df2c8a1a97c133c7dfa57c56c17f4b" }
-lichen-proto = { git = "https://github.com/lichenbtc-org/lichen", rev = "0224b0f902df2c8a1a97c133c7dfa57c56c17f4b" }
-lichen-babe = { git = "https://github.com/lichenbtc-org/lichen", rev = "0224b0f902df2c8a1a97c133c7dfa57c56c17f4b" }
-lichen-hub = { git = "https://github.com/lichenbtc-org/lichen", rev = "0224b0f902df2c8a1a97c133c7dfa57c56c17f4b" }
-lichen-wallet = { git = "https://github.com/lichenbtc-org/lichen", rev = "0224b0f902df2c8a1a97c133c7dfa57c56c17f4b" }
+# lichen, the base (lichenbtc-org/lichen), at master 0db43f7: its pricing
+# (a fee by capital and time, HubL2::pricing) and HubL2::tick
+lichen-contract = { git = "https://github.com/lichenbtc-org/lichen", rev = "0db43f786b7af05534f2a2fa7e2fedcfda84c9ff" }
+lichen-chain = { git = "https://github.com/lichenbtc-org/lichen", rev = "0db43f786b7af05534f2a2fa7e2fedcfda84c9ff" }
+lichen-proto = { git = "https://github.com/lichenbtc-org/lichen", rev = "0db43f786b7af05534f2a2fa7e2fedcfda84c9ff" }
+lichen-babe = { git = "https://github.com/lichenbtc-org/lichen", rev = "0db43f786b7af05534f2a2fa7e2fedcfda84c9ff" }
+lichen-hub = { git = "https://github.com/lichenbtc-org/lichen", rev = "0db43f786b7af05534f2a2fa7e2fedcfda84c9ff" }
+lichen-wallet = { git = "https://github.com/lichenbtc-org/lichen", rev = "0db43f786b7af05534f2a2fa7e2fedcfda84c9ff" }
 # the Bitcoin layer (lichenbtc-org/lichen-btc), as lichen pins it
 lichen-btc = { git = "https://github.com/lichenbtc-org/lichen-btc", rev = "d7d2de04f7f8d51b44f61a68c7e1789f36502071" }
 lichen-wots = { git = "https://github.com/lichenbtc-org/lichen-btc", rev = "d7d2de04f7f8d51b44f61a68c7e1789f36502071" }

@@ -201,7 +201,7 @@ fn main() -> Result<()> {
                     println!("  returns to  {addr}");
                 }
                 for m in w.l2.mints.iter().filter(|m| m.cid == h.record.cid()) {
-                    println!("  mint        {}:{} ({} sats of L-BTC, its key held)", m.txid, m.vout, m.value);
+                    println!("  mint        {}:{} ({} sats of L-BTC, {})", m.opening.txid, m.opening.vout, m.opening.value, m.swept.as_deref().map_or("not swept".to_string(), |t| format!("swept: {t}")));
                 }
                 for r in w.l2.returns.iter().filter(|r| r.cid == h.record.cid()) {
                     println!("  returned    {}:{} ({} sats)", r.txid, r.vout, r.value);

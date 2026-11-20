@@ -1,17 +1,19 @@
 //! `lexit-hub`: the hub daemon (a lichen hub selling a guaranteed
 //! exit from L-BTC). It runs beside a Bitcoin node (its wallet funds the
-//! contracts) and an Elements node (its wallet pays the mints).
+//! contracts), and reads Liquid from an Esplora (the network's public one
+//! by default) or from an Elements node of its own; its L-BTC is an LWK
+//! wallet of its own.
 //!
 //! Its secrets are made on first start and kept in `--dir`: the seed of
-//! its contract keys (`seed`), and its Liquid key (`liquid/liquid.key`,
-//! the returns' key).
+//! its contract keys (`seed`), its Liquid key (`liquid/liquid.key`, the
+//! returns' key) and its L-BTC wallet's mnemonic (`liquid/mnemonic`).
 
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser;
 use lichen_proto::{fresh_rho, Statement};
-use lexit_hub::{liquid_dir, Config, Hub, LiquidHub};
+use lexit_hub::{liquid_dir, Config, Hub, LiquidHub, LiquidSource};
 use lexit_proto::liquid::Rpc;
 use lexit_proto::LiquidNet;
 
@@ -33,13 +35,18 @@ struct Args {
     cookie: Option<PathBuf>,
     #[arg(long, default_value = "hub")]
     chain_wallet: String,
-    /// The Elements node's RPC URL and cookie file; the hub's wallet there.
+    /// Liquid's Esplora (the network's public one by default).
+    #[arg(long)]
+    liquid_esplora: Option<String>,
+    /// Instead of an Esplora: an Elements node's RPC URL and cookie file
+    /// (a production hub's own node; a regtest chain's).
     #[arg(long)]
     elements_rpc_url: Option<String>,
     #[arg(long)]
     elements_cookie: Option<PathBuf>,
-    #[arg(long, default_value = "hub")]
-    elements_wallet: String,
+    /// Warn when the hub's L-BTC falls below this, in sats.
+    #[arg(long, default_value_t = 1_000_000)]
+    float_warn: u64,
     /// The hub's statement: `hub-proves-mock` (a proof of a toy circuit,
     /// for trials) or `hub-proves` (its guest, not built yet).
     #[arg(long, default_value = "hub-proves-mock")]
@@ -90,13 +97,15 @@ fn main() -> Result<()> {
     if a.hostile || a.refuse_folds {
         anyhow::ensure!(a.network.is_test(), "--hostile and --refuse-folds are for test networks only, not {}", a.network);
     }
-    let rpc = Rpc {
-        url: a.elements_rpc_url.context("--elements-rpc-url: the Elements node's RPC URL")?,
-        cookie: a.elements_cookie.context("--elements-cookie: the Elements node's cookie file")?,
-        wallet: a.elements_wallet,
+    let source = match (a.elements_rpc_url.clone(), a.elements_cookie.clone()) {
+        (Some(url), Some(cookie)) => LiquidSource::Node(Rpc { url, cookie, wallet: String::new() }),
+        (None, None) => LiquidSource::Esplora(a.liquid_esplora.clone().or(liquid.default_esplora().map(str::to_string)).context("--liquid-esplora: no public Esplora for this Liquid network")?),
+        _ => anyhow::bail!("--elements-rpc-url and --elements-cookie go together"),
     };
     let pricing = lichen_proto::Pricing { deposit_ppm_year: a.deposit_ppm_year, liquidity_ppm_year: a.liquidity_ppm_year, flat: a.flat_fee };
-    let l2 = LiquidHub::open(&liquid_dir(&a.dir), liquid, rpc, pricing)?;
+    let mut l2 = LiquidHub::open(&liquid_dir(&a.dir), liquid, source, pricing)?;
+    l2.float_warn = a.float_warn;
+    println!("the hub's L-BTC: {} sats; fund it at {}", l2.balance()?, l2.address()?);
     let hub = Hub::start(
         Config {
             network: a.network,

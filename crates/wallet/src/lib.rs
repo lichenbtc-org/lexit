@@ -16,7 +16,7 @@
 //! Liquid wallet can be recorded by hand ([`LiquidWallet::record_return`]).
 
 pub mod front;
-pub mod lbtc;
+pub use lexit_proto::lbtc;
 
 use anyhow::{bail, ensure, Context, Result};
 use bitcoin::secp256k1::SecretKey;
@@ -52,19 +52,23 @@ pub struct Return {
     pub r_v: String,
 }
 
-/// A mint she holds: the output, its key's secret (hex; the internal key's,
-/// before the tree's tweak), hers once the funding showed `t`, and the
-/// funding's adaptor point (which fixes the tree); whether swept.
+/// A mint she holds: its key's secret (hex; the internal key's, before the
+/// tree's tweak), hers once the funding showed `t`; the funding's adaptor
+/// point (which fixes the tree); the output and its opening (the offer's);
+/// whether swept.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Mint {
     pub cid: u32,
-    pub txid: String,
-    pub vout: u32,
-    pub value: u64,
     pub secret: String,
     pub point: bitcoin::secp256k1::PublicKey,
+    pub opening: liquid::MintOpening,
     #[serde(default)]
     pub swept: Option<String>,
+}
+
+/// The mint an offer names (`OpenOffer::l2_offer`).
+fn mint_opening(l2_offer: &serde_json::Value) -> Result<liquid::MintOpening> {
+    serde_json::from_value(l2_offer.get("mint").cloned().context("the offer names no mint")?).context("the offer's mint")
 }
 
 /// An exit's plan: the amount claimed, `E`, and what `request` posts.
@@ -128,12 +132,6 @@ fn txid_internal(s: &str) -> Result<Hash> {
     let mut h = hash_hex(s)?;
     h.reverse();
     Ok(h)
-}
-
-/// The contract secrets of contract `cid`, in opening or open.
-fn secrets_of(w: &Wallet<LiquidWallet>, cid: u32) -> Result<ContractSecrets> {
-    let nonce = w.contracts.iter().find(|h| h.record.cid() == cid).map(|h| h.nonce.clone()).or_else(|| w.deposits.iter().find(|d| d.cid == cid).map(|d| d.nonce.clone())).with_context(|| format!("no contract {cid}"))?;
-    Ok(w.secrets(&nonce))
 }
 
 impl LiquidWallet {
@@ -287,52 +285,44 @@ impl WalletL2 for LiquidWallet {
         let want = lexit_proto::windows(record.network, offer.t_close);
         ensure!(k.windows == want, "the front's windows {:?}, not the network's {want:?}", k.windows);
         // D − fee of the policy asset, to the mint key behind this
-        // funding's adaptor point, confirmed on Liquid before she signs
-        let txid = offer.l2_offer.get("mint_txid").and_then(|v| v.as_str()).context("the offer names no mint")?;
+        // funding's adaptor point, confirmed on Liquid before she signs; its
+        // opening the offer's (the hub blinds it to a key of its own)
+        let opening = mint_opening(&offer.l2_offer)?;
         let view = w.l2.view()?;
-        let blinding = front::blinding(&secrets_of(w, record.cid())?);
-        let blinder = bitcoin::secp256k1::PublicKey::from_secret_key(&bitcoin::secp256k1::Secp256k1::signing_only(), &blinding);
         let d = &w.l2.deployment;
-        let spk = liquid::mint_address(&record.l2_address, &offer.mint_point, &d.hub, &blinder, d.net)?.script_pubkey();
+        let spk = liquid::mint_spk(&record.l2_address, &offer.mint_point, &d.hub, d.net)?;
+        let txid = txid_internal(&opening.txid)?;
         let mut waited = 0;
         loop {
-            if let Some((height, _)) = view.tx_block(&txid_internal(txid)?)? {
+            if let Some((height, _)) = view.tx_block(&txid)? {
                 // fresh: the hub may take a mint back after its timeout, so
                 // she accepts with half of it to come at least
                 let age = view.height()?.saturating_sub(height);
-                ensure!(age < u32::from(d.net.mint_timeout()) / 2, "the mint {txid} is {age} Liquid blocks old: too near its refund");
+                ensure!(age < u32::from(d.net.mint_timeout()) / 2, "the mint {} is {age} Liquid blocks old: too near its refund", opening.txid);
                 break;
             }
-            ensure!(waited < 600, "the mint {txid} isn't confirmed on Liquid after {waited} s");
+            ensure!(waited < 600, "the mint {} isn't confirmed on Liquid after {waited} s", opening.txid);
             std::thread::sleep(std::time::Duration::from_secs(5));
             waited += 5;
         }
-        let tx: elements::Transaction = elements::encode::deserialize(&view.tx(&txid_internal(txid)?)?)?;
-        let secp = elements::secp256k1_zkp::Secp256k1::new();
-        let sk = elements::secp256k1_zkp::SecretKey::from_slice(&blinding.secret_bytes())?;
-        let asset = w.l2.deployment.asset;
-        let paid = tx.output.iter().filter(|o| o.script_pubkey == spk).filter_map(|o| o.unblind(&secp, sk).ok()).any(|s| elements::encode::serialize(&s.asset)[..] == asset[..] && s.value == record.minted());
-        ensure!(paid, "the mint {txid} doesn't pay {} sats of L-BTC to the mint key", record.minted());
+        let tx: elements::Transaction = elements::encode::deserialize(&view.tx(&txid)?)?;
+        let o = tx.output.get(opening.vout as usize).context("the mint's output")?;
+        ensure!(o.script_pubkey == spk, "the mint {} doesn't pay the mint key", opening.txid);
+        ensure!(opening.value == record.minted(), "the mint is {} sats, not {}", opening.value, record.minted());
+        ensure!(liquid::opens(o, &opening.secrets(&d.asset)?), "the mint's opening doesn't open it: not {} sats of L-BTC", record.minted());
         Ok(())
     }
     fn minted(w: &mut Wallet<Self>, held: &Held, t: &SecretKey) -> Result<()> {
-        // her mint key's secret (liquid::mint_secret), the mint's output
-        // found by its address; then swept into her L-BTC (if that fails
-        // now, `sweep_mint` later)
+        // her mint key's secret (liquid::mint_secret) and the mint's opening;
+        // then swept into her L-BTC (if that fails now, `sweep_mint` later)
         let locked = held.mint.as_ref().context("no mint offered")?;
-        let txid = locked.l2.get("mint_txid").and_then(|v| v.as_str()).context("the offer names no mint")?.to_string();
-        let s = w.secrets(&held.nonce);
-        let a = s.l2();
+        let opening = mint_opening(&locked.l2)?;
+        let a = w.secrets(&held.nonce).l2();
         ensure!(a.x_only_public_key().0.serialize() == held.record.l2_address, "the contract's L2 address isn't its key's");
         let secret = liquid::mint_secret(&a, t)?;
-        let blinder = bitcoin::secp256k1::PublicKey::from_secret_key(&bitcoin::secp256k1::Secp256k1::signing_only(), &front::blinding(&s));
-        let d = w.l2.deployment.clone();
-        let spk = liquid::mint_address(&held.record.l2_address, &locked.point, &d.hub, &blinder, d.net)?.script_pubkey();
-        let tx: elements::Transaction = elements::encode::deserialize(&w.l2.view()?.tx(&txid_internal(&txid)?)?)?;
-        let vout = tx.output.iter().position(|o| o.script_pubkey == spk).context("the mint's output")? as u32;
         let cid = held.record.cid();
         w.l2.mints.retain(|m| m.cid != cid);
-        w.l2.mints.push(Mint { cid, txid, vout, value: held.record.minted(), secret: hex::encode(secret.secret_bytes()), point: locked.point, swept: None });
+        w.l2.mints.push(Mint { cid, secret: hex::encode(secret.secret_bytes()), point: locked.point, opening, swept: None });
         w.save()?;
         if let Err(e) = sweep_mint(w, cid) {
             w.say(format!("contract {cid}: the mint isn't swept yet ({e:#}); `lexit sweep-mint {cid}` sweeps it"));
@@ -412,15 +402,15 @@ pub fn sweep_mint(w: &mut LexitWallet, cid: u32) -> Result<String> {
     let m = w.l2.mints.iter().find(|m| m.cid == cid).cloned().with_context(|| format!("no mint for contract {cid}"))?;
     ensure!(m.swept.is_none(), "contract {cid}'s mint is swept already");
     let h = w.contracts.iter().find(|h| h.record.cid() == cid).cloned().with_context(|| format!("no contract {cid}"))?;
-    let blinding = front::blinding(&w.secrets(&h.nonce));
     let d = w.l2.deployment.clone();
-    let tx: elements::Transaction = elements::encode::deserialize(&w.l2.view()?.tx(&txid_internal(&m.txid)?)?)?;
-    let (_, _, _, secrets) = lbtc::open(&tx, m.vout, &blinding.secret_bytes(), &liquid::generator(&d.asset))?;
+    let tx: elements::Transaction = elements::encode::deserialize(&w.l2.view()?.tx(&txid_internal(&m.opening.txid)?)?)?;
+    let secrets = m.opening.secrets(&d.asset)?;
     let (_, info) = liquid::mint_tree(&h.record.l2_address, &m.point, &d.hub, d.net)?;
     let secp = elements::secp256k1_zkp::Secp256k1::new();
     let keypair = elements::secp256k1_zkp::Keypair::from_seckey_slice(&secp, &hex::decode(&m.secret)?)?;
-    let outpoint = elements::OutPoint::new(tx.txid(), m.vout);
-    let swept = w.l2.purse()?.as_mut().unwrap().sweep(outpoint, tx.output[m.vout as usize].clone(), secrets, &keypair, info.merkle_root())?;
+    let keypair = lbtc::Purse::tweaked(&keypair, info.merkle_root());
+    let outpoint = elements::OutPoint::new(tx.txid(), m.opening.vout);
+    let swept = w.l2.purse()?.as_mut().unwrap().sweep(vec![(outpoint, tx.output[m.opening.vout as usize].clone(), secrets, keypair)])?;
     let txid = swept.txid().to_string();
     if let Some(x) = w.l2.mints.iter_mut().find(|x| x.cid == cid) {
         x.swept = Some(txid.clone());
