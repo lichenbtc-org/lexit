@@ -682,7 +682,7 @@ function render() {
     if (!c.closed && !c.defaulted && !over && c.disputing == null) {
       // 100 sats kept for the return's Liquid fee (a few dozen)
       const unit = Math.max(1, c.unit), all = Math.floor(Math.min(Math.max(0, bal - 100) + (c.returned || 0), c.cap) / unit) * unit;
-      if (all > 0) acts += `<div class="row mt"><input id="w-${c.cid}" type="number" inputmode="numeric" min="0" step="${unit}" value="${all}"><button class="btn small" data-w="${c.cid}">Exit to BTC</button></div><div class="note">Your L-BTC goes back to the contract, and the hub pays as much BTC to your payout address, in minutes. This ends the contract: L-BTC you keep has no guaranteed exit after. In whole units of ${sats(unit)} sats.</div>`;
+      if (all > 0) acts += `<div class="row mt"><input id="w-${c.cid}" type="number" inputmode="numeric" min="0" step="${unit}" value="${all}"><button class="btn small" data-w="${c.cid}">Exit to BTC</button></div><div class="note">This ends the contract: L-BTC you keep has no guaranteed exit after. In whole units of ${sats(unit)} sats.</div>`;
     }
     if (c.disputing != null && !c.closed) acts += `<button class="btn small mt" data-exit="${c.cid}">Exit on Bitcoin</button><div class="note">the hub didn't pay your exit: your claim goes on chain, and the hub pays it unless it proves it false</div>`;
     if (!c.closed && !c.defaulted && over) acts += `<button class="btn small sec mt" data-d="${c.cid}">Post the default (your reserve back)</button>`;
