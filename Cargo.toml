@@ -32,28 +32,17 @@ lexit-statement = { path = "crates/statement" }
 lexit-proto = { path = "crates/proto" }
 lexit-hub = { path = "crates/hub" }
 lexit-wallet = { path = "crates/wallet" }
-# lichen, the base (lichenbtc-org/lichen), at the rev glichen and vlichen
-# take (its crates are the same at master, 6c54fa1)
-lichen-contract = { git = "https://github.com/lichenbtc-org/lichen", rev = "e6532ca6435ca6ea4701ed4faac92a7011ec44bf" }
-lichen-chain = { git = "https://github.com/lichenbtc-org/lichen", rev = "e6532ca6435ca6ea4701ed4faac92a7011ec44bf" }
-lichen-proto = { git = "https://github.com/lichenbtc-org/lichen", rev = "e6532ca6435ca6ea4701ed4faac92a7011ec44bf" }
-lichen-babe = { git = "https://github.com/lichenbtc-org/lichen", rev = "e6532ca6435ca6ea4701ed4faac92a7011ec44bf" }
-lichen-hub = { git = "https://github.com/lichenbtc-org/lichen", rev = "e6532ca6435ca6ea4701ed4faac92a7011ec44bf" }
-lichen-wallet = { git = "https://github.com/lichenbtc-org/lichen", rev = "e6532ca6435ca6ea4701ed4faac92a7011ec44bf" }
+# lichen, the base (lichenbtc-org/lichen), at master 0224b0f: its pricing
+# (a fee by capital and time, HubL2::pricing)
+lichen-contract = { git = "https://github.com/lichenbtc-org/lichen", rev = "0224b0f902df2c8a1a97c133c7dfa57c56c17f4b" }
+lichen-chain = { git = "https://github.com/lichenbtc-org/lichen", rev = "0224b0f902df2c8a1a97c133c7dfa57c56c17f4b" }
+lichen-proto = { git = "https://github.com/lichenbtc-org/lichen", rev = "0224b0f902df2c8a1a97c133c7dfa57c56c17f4b" }
+lichen-babe = { git = "https://github.com/lichenbtc-org/lichen", rev = "0224b0f902df2c8a1a97c133c7dfa57c56c17f4b" }
+lichen-hub = { git = "https://github.com/lichenbtc-org/lichen", rev = "0224b0f902df2c8a1a97c133c7dfa57c56c17f4b" }
+lichen-wallet = { git = "https://github.com/lichenbtc-org/lichen", rev = "0224b0f902df2c8a1a97c133c7dfa57c56c17f4b" }
 # the Bitcoin layer (lichenbtc-org/lichen-btc), as lichen pins it
 lichen-btc = { git = "https://github.com/lichenbtc-org/lichen-btc", rev = "d7d2de04f7f8d51b44f61a68c7e1789f36502071" }
 lichen-wots = { git = "https://github.com/lichenbtc-org/lichen-btc", rev = "d7d2de04f7f8d51b44f61a68c7e1789f36502071" }
-
-# lichen's pricing (its branch `pricing`, 0224b0f: a fee by capital and
-# time, HubL2::pricing), from the local worktree until it is pushed: then
-# the revs above move to it and this patch goes
-[patch."https://github.com/lichenbtc-org/lichen"]
-lichen-contract = { path = "../lichen-pricing/crates/contract" }
-lichen-chain = { path = "../lichen-pricing/crates/chain" }
-lichen-proto = { path = "../lichen-pricing/crates/proto" }
-lichen-babe = { path = "../lichen-pricing/crates/babe" }
-lichen-hub = { path = "../lichen-pricing/crates/hub" }
-lichen-wallet = { path = "../lichen-pricing/crates/wallet" }
 
 # Dependencies (lichen's crates among them) optimised even in debug
 # builds: the pre-signing, the garbling and the curve arithmetic are too

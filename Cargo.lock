@@ -1249,6 +1249,7 @@ checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 [[package]]
 name = "lichen-babe"
 version = "0.4.5"
+source = "git+https://github.com/lichenbtc-org/lichen?rev=0224b0f902df2c8a1a97c133c7dfa57c56c17f4b#0224b0f902df2c8a1a97c133c7dfa57c56c17f4b"
 dependencies = [
  "anyhow",
  "ark-bn254",
@@ -1294,6 +1295,7 @@ dependencies = [
 [[package]]
 name = "lichen-chain"
 version = "0.4.5"
+source = "git+https://github.com/lichenbtc-org/lichen?rev=0224b0f902df2c8a1a97c133c7dfa57c56c17f4b#0224b0f902df2c8a1a97c133c7dfa57c56c17f4b"
 dependencies = [
  "anyhow",
  "bitcoin",
@@ -1306,6 +1308,7 @@ dependencies = [
 [[package]]
 name = "lichen-contract"
 version = "0.4.5"
+source = "git+https://github.com/lichenbtc-org/lichen?rev=0224b0f902df2c8a1a97c133c7dfa57c56c17f4b#0224b0f902df2c8a1a97c133c7dfa57c56c17f4b"
 dependencies = [
  "anyhow",
  "bitcoin",
@@ -1317,6 +1320,7 @@ dependencies = [
 [[package]]
 name = "lichen-hub"
 version = "0.4.5"
+source = "git+https://github.com/lichenbtc-org/lichen?rev=0224b0f902df2c8a1a97c133c7dfa57c56c17f4b#0224b0f902df2c8a1a97c133c7dfa57c56c17f4b"
 dependencies = [
  "anyhow",
  "ark-bn254",
@@ -1339,6 +1343,7 @@ dependencies = [
 [[package]]
 name = "lichen-proto"
 version = "0.4.5"
+source = "git+https://github.com/lichenbtc-org/lichen?rev=0224b0f902df2c8a1a97c133c7dfa57c56c17f4b#0224b0f902df2c8a1a97c133c7dfa57c56c17f4b"
 dependencies = [
  "anyhow",
  "ark-bn254",
@@ -1373,6 +1378,7 @@ dependencies = [
 [[package]]
 name = "lichen-wallet"
 version = "0.4.5"
+source = "git+https://github.com/lichenbtc-org/lichen?rev=0224b0f902df2c8a1a97c133c7dfa57c56c17f4b#0224b0f902df2c8a1a97c133c7dfa57c56c17f4b"
 dependencies = [
  "anyhow",
  "bitcoin",
