@@ -37,7 +37,10 @@ pub use lichen_wallet::{dispute, engine, hub_call, hub_info, Ask, Deposit, Held,
 pub type LexitWallet = Wallet<LiquidWallet>;
 
 /// A return of L-BTC she made for contract `cid`: the output, its value
-/// and blinding factors (hex; zero for an explicit output).
+/// and blinding factors (hex; zero for an explicit output). The factors are
+/// the scalars' bytes, big-endian, as secp256k1-zkp takes them: the
+/// reverse of what elementsd's RPC displays (`gettransaction`'s
+/// `assetblinder`, `amountblinder`), which shows them as it shows hashes.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Return {
     pub cid: u32,
@@ -83,6 +86,10 @@ impl ExitPlan {
 pub struct LiquidWallet {
     pub deployment: Deployment,
     pub esplora: String,
+    /// Instead of the Esplora, a node (tests, or a user who runs one); not
+    /// kept in the file.
+    #[serde(skip)]
+    pub node: Option<liquid::Rpc>,
     #[serde(default)]
     pub mints: Vec<Mint>,
     #[serde(default)]
@@ -117,9 +124,12 @@ fn secrets_of(w: &Wallet<LiquidWallet>, cid: u32) -> Result<ContractSecrets> {
 
 impl LiquidWallet {
     /// Its view of Liquid.
-    pub fn view(&self) -> Result<Esplora> {
+    pub fn view(&self) -> Result<Box<dyn LiquidView>> {
+        if let Some(n) = &self.node {
+            return Ok(Box::new(n.clone()));
+        }
         ensure!(!self.esplora.is_empty(), "no Esplora for Liquid: give one (--esplora-liquid)");
-        Ok(Esplora { url: self.esplora.clone() })
+        Ok(Box::new(Esplora { url: self.esplora.clone() }))
     }
 
     /// Record a return she made for contract `cid` (from any Liquid wallet:
@@ -136,12 +146,9 @@ impl LiquidWallet {
     /// the index there).
     fn cite(&self, r: &Return) -> Result<Citation> {
         let view = self.view()?;
-        let status: serde_json::Value = ureq::get(&format!("{}/tx/{}/status", self.esplora.trim_end_matches('/'), r.txid)).call()?.into_json()?;
-        ensure!(status["confirmed"].as_bool() == Some(true), "the return {} isn't confirmed on Liquid yet", r.txid);
-        let height = status["block_height"].as_u64().context("its block's height")? as u32;
-        let hash = status["block_hash"].as_str().context("its block")?;
         let txid = txid_internal(&r.txid)?;
-        let index = view.txids(hash)?.iter().position(|t| *t == txid).context("the return isn't among its block's transactions")? as u32;
+        let (height, hash) = view.tx_block(&txid)?.with_context(|| format!("the return {} isn't confirmed on Liquid yet", r.txid))?;
+        let index = view.txids(&hash)?.iter().position(|t| *t == txid).context("the return isn't among its block's transactions")? as u32;
         Ok(Citation { height, index, vout: r.vout, value: r.value, r_a: hash_hex(&r.r_a)?, r_v: hash_hex(&r.r_v)? })
     }
 
@@ -174,7 +181,7 @@ impl WalletL2 for LiquidWallet {
     fn create(info: &Info) -> Result<LiquidWallet> {
         let deployment: Deployment = info_l2(info, "liquid")?;
         let esplora = deployment.net.default_esplora().unwrap_or_default().to_string();
-        let w = LiquidWallet { deployment, esplora, mints: vec![], returns: vec![] };
+        let w = LiquidWallet { deployment, esplora, node: None, mints: vec![], returns: vec![] };
         w.check_info(info)?;
         Ok(w)
     }
@@ -205,7 +212,7 @@ impl WalletL2 for LiquidWallet {
         // Liquid as she sees it: the federation's script, and the first
         // height not ahead of the tip (nor long behind it)
         let view = w.l2.view()?;
-        ensure!(liquid::signblockscript(&view)? == t.deployment.signblockscript, "the hub's block signing script isn't Liquid's tip's");
+        ensure!(liquid::signblockscript(view.as_ref())? == t.deployment.signblockscript, "the hub's block signing script isn't Liquid's tip's");
         let tip = view.height()?;
         ensure!(t.from <= tip && t.from + 120 >= tip, "the setup's first Liquid height {} isn't Liquid's tip ({tip})", t.from);
         Ok(())
@@ -230,13 +237,13 @@ impl WalletL2 for LiquidWallet {
         // funding's adaptor point, confirmed on Liquid before she signs
         let txid = offer.l2_offer.get("mint_txid").and_then(|v| v.as_str()).context("the offer names no mint")?;
         let view = w.l2.view()?;
-        let key = liquid::mint_key(&record.l2_address, &offer.mint_point)?;
-        let spk = liquid::p2tr_address(&key, None, w.l2.deployment.net)?.script_pubkey();
         let blinding = front::blinding(&secrets_of(w, record.cid())?);
+        let blinder = bitcoin::secp256k1::PublicKey::from_secret_key(&bitcoin::secp256k1::Secp256k1::signing_only(), &blinding);
+        let d = &w.l2.deployment;
+        let spk = liquid::mint_address(&record.l2_address, &offer.mint_point, &d.hub, &blinder, d.net)?.script_pubkey();
         let mut waited = 0;
         loop {
-            let status: serde_json::Value = ureq::get(&format!("{}/tx/{txid}/status", view.url.trim_end_matches('/'))).call().ok().and_then(|r| r.into_json().ok()).unwrap_or_default();
-            if status["confirmed"].as_bool() == Some(true) {
+            if view.tx_block(&txid_internal(txid)?)?.is_some() {
                 break;
             }
             ensure!(waited < 600, "the mint {txid} isn't confirmed on Liquid after {waited} s");

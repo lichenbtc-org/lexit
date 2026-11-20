@@ -49,6 +49,18 @@ impl LiquidNet {
             LiquidNet::Regtest => None,
         }
     }
+    /// The Liquid blocks after which the hub may take back a mint (its
+    /// refund leaf): long past lichen's deposit timeout, by which the
+    /// funding is out or the deposit refunded, so that a mint can't be
+    /// taken back from a user still owed it. Three days of Liquid's
+    /// minute blocks; a regtest chain's blocks come when the tests make
+    /// them.
+    pub fn mint_timeout(self) -> u16 {
+        match self {
+            LiquidNet::Liquid | LiquidNet::Testnet => 4_320,
+            LiquidNet::Regtest => 1_000,
+        }
+    }
     /// The seconds the statement allows between a Liquid block's time and
     /// `request`'s block time: Bitcoin's block times run up to two hours
     /// ahead and about an hour behind; regtest's are the machine's.
@@ -72,6 +84,8 @@ pub trait LiquidView {
     fn txids(&self, hash: &str) -> Result<Vec<Hash>>;
     /// A transaction, serialized.
     fn tx(&self, txid: &Hash) -> Result<Vec<u8>>;
+    /// The block a transaction is in (height, hash), if confirmed.
+    fn tx_block(&self, txid: &Hash) -> Result<Option<(u32, String)>>;
 }
 
 fn display(h: &Hash) -> String {
@@ -86,7 +100,8 @@ fn internal(s: &str) -> Result<Hash> {
     Ok(h)
 }
 
-/// elementsd over JSON-RPC, by its cookie file (the hub's node).
+/// elementsd over JSON-RPC, by its cookie file (the hub's node; a test's).
+#[derive(Clone, Debug)]
 pub struct Rpc {
     pub url: String,
     pub cookie: std::path::PathBuf,
@@ -152,6 +167,14 @@ impl LiquidView for Rpc {
     fn tx(&self, txid: &Hash) -> Result<Vec<u8>> {
         Ok(hex::decode(self.call("getrawtransaction", serde_json::json!([display(txid)]))?.as_str().context("a transaction's hex")?)?)
     }
+    fn tx_block(&self, txid: &Hash) -> Result<Option<(u32, String)>> {
+        // the node's index (-txindex); a transaction it doesn't know is
+        // unconfirmed as far as we can tell
+        let Ok(t) = self.call("getrawtransaction", serde_json::json!([display(txid), true])) else { return Ok(None) };
+        let Some(hash) = t["blockhash"].as_str() else { return Ok(None) };
+        let h = self.call("getblockheader", serde_json::json!([hash, true]))?;
+        Ok(Some((h["height"].as_u64().context("a height")? as u32, hash.to_string())))
+    }
 }
 
 /// A Liquid Esplora (the user's view: no node).
@@ -188,6 +211,16 @@ impl LiquidView for Esplora {
     fn tx(&self, txid: &Hash) -> Result<Vec<u8>> {
         Ok(hex::decode(self.get(&format!("tx/{}/hex", display(txid)))?.trim())?)
     }
+    fn tx_block(&self, txid: &Hash) -> Result<Option<(u32, String)>> {
+        let s: serde_json::Value = match self.get(&format!("tx/{}/status", display(txid))) {
+            Ok(s) => serde_json::from_str(&s)?,
+            Err(_) => return Ok(None),
+        };
+        if s["confirmed"].as_bool() != Some(true) {
+            return Ok(None);
+        }
+        Ok(Some((s["block_height"].as_u64().context("a height")? as u32, s["block_hash"].as_str().context("a block")?.to_string())))
+    }
 }
 
 /// A block, as a ground shows it, at `height`.
@@ -221,6 +254,33 @@ pub fn mint_secret(a: &bitcoin::secp256k1::Keypair, t: &bitcoin::secp256k1::Secr
         sk = sk.negate();
     }
     Ok(sk.mul_tweak(&bitcoin::secp256k1::Scalar::from_be_bytes(h)?)?.add_tweak(&bitcoin::secp256k1::Scalar::from(*t))?)
+}
+
+/// The mint's refund leaf: after `timeout` Liquid blocks, the hub's key
+/// (`hub`, x-only), for a mint whose funding never came.
+pub fn mint_refund_script(hub: &Hash, timeout: u16) -> elements::Script {
+    elements::script::Builder::new()
+        .push_int(i64::from(timeout))
+        .push_opcode(elements::opcodes::all::OP_CSV)
+        .push_opcode(elements::opcodes::all::OP_DROP)
+        .push_slice(hub)
+        .push_opcode(elements::opcodes::all::OP_CHECKSIG)
+        .into_script()
+}
+
+/// The mint's address: Taproot, its internal key the mint key ([`mint_key`],
+/// the user's once the funding shows `t`), one leaf the hub's refund
+/// ([`mint_refund_script`]); blinded to the user's key.
+pub fn mint_address(l2_address: &Hash, mint_point: &PublicKey, hub: &Hash, blinder: &PublicKey, net: LiquidNet) -> Result<elements::Address> {
+    let secp = elements::secp256k1_zkp::Secp256k1::verification_only();
+    let p = elements::schnorr::UntweakedPublicKey::from_slice(&mint_key(l2_address, mint_point)?.serialize())?;
+    let info = elements::taproot::TaprootBuilder::new()
+        .add_leaf(0, mint_refund_script(hub, net.mint_timeout()))
+        .map_err(|e| anyhow::anyhow!("the refund leaf: {e:?}"))?
+        .finalize(&secp, p)
+        .map_err(|e| anyhow::anyhow!("the mint's tree: {e:?}"))?;
+    let blinder = elements::secp256k1_zkp::PublicKey::from_slice(&blinder.serialize())?;
+    Ok(elements::Address::p2tr(&secp, p, info.merkle_root(), Some(blinder), net.address_params()))
 }
 
 /// A key-path-only Taproot address on `net` for the output key `key`,

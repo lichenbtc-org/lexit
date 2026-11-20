@@ -200,13 +200,11 @@ impl HubL2 for LiquidHub {
     }
     fn offered(&self, ctx: &dyn Ctx, record: &Record, mint_point: &PublicKey, fault: OpeningFault) -> Result<serde_json::Value> {
         // D − fee of L-BTC, paid now to a key she can spend once this
-        // funding is out, blinded to her key. (To come: the mint output's
-        // refund leaf, the hub's after a timeout, for a funding never
-        // broadcast; see docs/PLAN.md.)
+        // funding is out (the hub's again after the mint's timeout, if it
+        // never is), blinded to her key
         let k = lexit_proto::keys(record)?;
         let sats = record.minted() - u64::from(fault == OpeningFault::ShortMint);
-        let key = liquid::mint_key(&record.l2_address, mint_point)?;
-        let address = liquid::p2tr_address(&key, Some(&k.alice.blinding), self.deployment.net)?;
+        let address = liquid::mint_address(&record.l2_address, mint_point, &self.deployment.hub, &k.alice.blinding, self.deployment.net)?;
         let txid = self.rpc.wallet_call("sendtoaddress", serde_json::json!([address.to_string(), btc(sats)]))?;
         let txid = txid.as_str().context("the mint's txid")?.to_string();
         ctx.note(format!("contract {}: minted {sats} sats of L-BTC to the user, locked to the funding: {txid}", record.cid()));

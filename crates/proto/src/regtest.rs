@@ -157,14 +157,20 @@ impl ElementsRegtest {
     /// `n` blocks, each the node's, signed by the federation and
     /// submitted.
     pub fn mine(&self, n: u32) -> Result<()> {
-        for _ in 0..n {
-            let b = hex::decode(self.rpc.call("getnewblockhex", serde_json::json!([]))?.as_str().context("a block's hex")?)?;
-            let signed = self.federation.sign_block(&b)?;
-            let r = self.rpc.call("submitblock", serde_json::json!([hex::encode(signed)]))?;
-            ensure!(r.is_null(), "the node refused our block: {r}");
-        }
-        Ok(())
+        mine_with(&self.rpc, &self.federation, n)
     }
+}
+
+/// `n` blocks on the node at `rpc`, signed by `federation` (for a thread of
+/// its own: [`ElementsRegtest::mine`]'s).
+pub fn mine_with(rpc: &Rpc, federation: &Federation, n: u32) -> Result<()> {
+    for _ in 0..n {
+        let b = hex::decode(rpc.call("getnewblockhex", serde_json::json!([]))?.as_str().context("a block's hex")?)?;
+        let signed = federation.sign_block(&b)?;
+        let r = rpc.call("submitblock", serde_json::json!([hex::encode(signed)]))?;
+        ensure!(r.is_null(), "the node refused our block: {r}");
+    }
+    Ok(())
 }
 
 impl Drop for ElementsRegtest {
