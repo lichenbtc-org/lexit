@@ -35,6 +35,12 @@ struct Args {
     /// regtest chain needs its own).
     #[arg(long)]
     esplora_liquid: Option<String>,
+    /// Instead of Liquid's Esplora: an Elements node's RPC URL and cookie
+    /// file (a regtest chain's, or your own node).
+    #[arg(long)]
+    elements_rpc_url: Option<String>,
+    #[arg(long)]
+    elements_cookie: Option<PathBuf>,
     /// The hub's statement: `hub-proves` or `hub-proves-mock`.
     #[arg(long, default_value = "hub-proves-mock")]
     statement: String,
@@ -115,6 +121,15 @@ fn chain(a: &Args) -> Result<lichen_chain::Chain> {
     }
 }
 
+/// The Elements node to read Liquid by, if named.
+fn node(a: &Args) -> Result<Option<lexit_proto::liquid::Rpc>> {
+    match (&a.elements_rpc_url, &a.elements_cookie) {
+        (Some(url), Some(cookie)) => Ok(Some(lexit_proto::liquid::Rpc { url: url.clone(), cookie: cookie.clone(), wallet: String::new() })),
+        (None, None) => Ok(None),
+        _ => anyhow::bail!("--elements-rpc-url and --elements-cookie go together"),
+    }
+}
+
 fn main() -> Result<()> {
     let a = Args::parse();
     if let Cmd::Init = a.cmd {
@@ -122,6 +137,7 @@ fn main() -> Result<()> {
         if let Some(e) = &a.esplora_liquid {
             l2.esplora = e.clone();
         }
+        l2.node = node(&a)?;
         let w = Wallet::create_with(&a.wallet, &a.hub, l2)?;
         println!("a wallet for the hub at {}: {}", a.hub, w.path().display());
         return Ok(());
@@ -130,6 +146,7 @@ fn main() -> Result<()> {
     if let Some(e) = &a.esplora_liquid {
         w.l2.esplora = e.clone();
     }
+    w.l2.node = node(&a)?;
     w.progress = Some(std::sync::Arc::new(|m: String| println!("{m}")));
     match a.cmd {
         Cmd::Init => unreachable!(),
