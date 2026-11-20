@@ -1,6 +1,8 @@
 # Using the Lexit wallet
 
-`lexit` is the user's wallet (a command line for now; apps come later).
+`lexit` is the user's wallet as a command line (the same wallet as a page
+in your browser, and as an app for Android and the desktop:
+[APPS.md](APPS.md)).
 With it you swap BTC into L-BTC through a hub, and hold a contract that
 guarantees your way back: until the contract's end, L-BTC you return to it
 is paid back in BTC, up to your cap, whatever the hub does. You run no

@@ -1,0 +1,64 @@
+[package]
+name = "lexit-gui"
+description = "A local GUI for a Lexit wallet: a page in your browser, served on 127.0.0.1"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace]
+members = [".", "app"]
+
+[lib]
+name = "lexit_gui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "lexit-gui"
+path = "src/main.rs"
+required-features = ["desktop"]
+
+# A local stack for developing the GUI: regtest bitcoind, the sequencer,
+# a hub and a miner in one process, and a faucet to pay deposits.
+[[bin]]
+name = "lexit-devstack"
+path = "src/bin/devstack.rs"
+required-features = ["devstack"]
+
+# The library (the wallet, its API and the page) builds anywhere, Android
+# too; the desktop server and the devstack (lichen's hub and sequencer,
+# which prove with RISC Zero) only on a desktop.
+[features]
+default = ["desktop", "devstack"]
+desktop = ["dep:clap", "dep:tiny_http"]
+devstack = ["desktop", "dep:lexit-hub", "dep:bitcoincore-rpc", "dep:signal-hook", "dep:lichen-btc"]
+
+[dependencies]
+anyhow = "1"
+bitcoin = { version = "0.32", features = ["serde"] }
+bitcoincore-rpc = { version = "0.19", optional = true }
+clap = { version = "4", features = ["derive"], optional = true }
+getrandom = "0.2"
+hex = "0.4"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+signal-hook = { version = "0.3", optional = true }
+tiny_http = { version = "0.12", optional = true }
+ureq = { version = "2", features = ["json"] }
+elements = "0.27"
+# Lexit, this repository's
+lexit-wallet = { path = "../crates/wallet" }
+lexit-hub = { path = "../crates/hub", optional = true }
+lexit-proto = { path = "../crates/proto" }
+lexit-statement = { path = "../crates/statement" }
+# lichen, as Lexit pins it
+lichen-chain = { git = "https://github.com/lichenbtc-org/lichen", rev = "0db43f786b7af05534f2a2fa7e2fedcfda84c9ff" }
+lichen-proto = { git = "https://github.com/lichenbtc-org/lichen", rev = "0db43f786b7af05534f2a2fa7e2fedcfda84c9ff" }
+lichen-wallet = { git = "https://github.com/lichenbtc-org/lichen", rev = "0db43f786b7af05534f2a2fa7e2fedcfda84c9ff" }
+lichen-babe = { git = "https://github.com/lichenbtc-org/lichen", rev = "0db43f786b7af05534f2a2fa7e2fedcfda84c9ff" }
+# lichen-btc, at the commit lichen pins (one package, not two)
+lichen-btc = { git = "https://github.com/lichenbtc-org/lichen-btc", rev = "d7d2de04f7f8d51b44f61a68c7e1789f36502071", optional = true }
+
+# Lexit's, repeated: profiles apply only from the top-level workspace
+[profile.dev.package."*"]
+opt-level = 2

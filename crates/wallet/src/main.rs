@@ -35,6 +35,10 @@ struct Args {
     /// regtest chain needs its own).
     #[arg(long)]
     esplora_liquid: Option<String>,
+    /// The Waterfalls server the L-BTC wallet syncs through (the Liquid
+    /// network's public one by default; `none`: through the Esplora).
+    #[arg(long)]
+    waterfalls_liquid: Option<String>,
     /// Instead of Liquid's Esplora: an Elements node's RPC URL and cookie
     /// file (a regtest chain's, or your own node).
     #[arg(long)]
@@ -154,6 +158,9 @@ fn main() -> Result<()> {
         if let Some(e) = &a.esplora_liquid {
             l2.esplora = e.clone();
         }
+        if let Some(wf) = &a.waterfalls_liquid {
+            l2.waterfalls = if wf == "none" { String::new() } else { wf.clone() };
+        }
         l2.node = node(&a)?;
         let w = Wallet::create_with(&a.wallet, &a.hub, l2)?;
         println!("a wallet for the hub at {}: {}", a.hub, w.path().display());
@@ -162,6 +169,9 @@ fn main() -> Result<()> {
     let mut w = Wallet::open(&a.wallet, &a.hub)?;
     if let Some(e) = &a.esplora_liquid {
         w.l2.esplora = e.clone();
+    }
+    if let Some(wf) = &a.waterfalls_liquid {
+        w.l2.waterfalls = if wf == "none" { String::new() } else { wf.clone() };
     }
     w.l2.node = node(&a)?;
     w.progress = Some(std::sync::Arc::new(|m: String| println!("{m}")));

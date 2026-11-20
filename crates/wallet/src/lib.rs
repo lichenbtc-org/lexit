@@ -102,6 +102,11 @@ pub struct LiquidWallet {
     #[serde(default)]
     pub birth: u32,
     pub esplora: String,
+    /// The Waterfalls server its L-BTC wallet syncs through (a scan in one
+    /// request, where an Esplora takes dozens, which a public one
+    /// rate-limits); empty: through the Esplora.
+    #[serde(default)]
+    pub waterfalls: String,
     /// Instead of the Esplora, a node (tests, or a user who runs one); not
     /// kept in the file.
     #[serde(skip)]
@@ -148,6 +153,7 @@ impl LiquidWallet {
             }
             let backend = match &self.node {
                 Some(rpc) => lbtc::Backend::Node(Box::new(lbtc::NodeBackend::new(rpc.clone(), self.birth))),
+                None if !self.waterfalls.is_empty() => lbtc::Backend::Waterfalls(Box::new(lwk_wollet::blocking::WaterfallsClient::new(&self.waterfalls, network)?)),
                 None => lbtc::Backend::Esplora(Box::new(lwk_wollet::blocking::EsploraClient::new(&self.esplora, network)?)),
             };
             let p = lbtc::Purse::new(&self.mnemonic, network, backend)?;
@@ -231,8 +237,9 @@ impl WalletL2 for LiquidWallet {
     fn create(info: &Info) -> Result<LiquidWallet> {
         let deployment: Deployment = info_l2(info, "liquid")?;
         let esplora = deployment.net.default_esplora().unwrap_or_default().to_string();
+        let waterfalls = deployment.net.default_waterfalls().unwrap_or_default().to_string();
         let mnemonic = lbtc::new_mnemonic(lbtc::network(deployment.net, &deployment.asset, None)?)?;
-        let w = LiquidWallet { deployment, mnemonic, birth: 0, esplora, node: None, mints: vec![], returns: vec![], purse: Default::default() };
+        let w = LiquidWallet { deployment, mnemonic, birth: 0, esplora, waterfalls, node: None, mints: vec![], returns: vec![], purse: Default::default() };
         w.check_info(info)?;
         Ok(w)
     }

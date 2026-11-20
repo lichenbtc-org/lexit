@@ -12,6 +12,7 @@ a ledger that is Liquid itself.
 | `hub` | `LiquidHub`, the `HubL2`: terms, the mint, the cooperative check, the dispute's front, its chores; the `lexit-hub` binary |
 | `wallet` | `LiquidWallet`, the `WalletL2`: terms and mints checked, the mint swept, returns paid and claimed; the `lexit` CLI |
 | `r0/` | the guest (`hp-guest`), the prover (`lexit-r0`), the build and prover scripts (`hp-split.sh`: the STARK here, the wrap elsewhere) |
+| `gui/` | the wallet's GUI and app ([APPS.md](APPS.md)), its own workspace: `lexit-gui` (the page on 127.0.0.1), `lexit-devstack` (bitcoind, our Elements chain, a hub, faucets), `app/` (Tauri: Android and the desktop) |
 | `deploy/` | the hub's deployment |
 
 ## Tests
