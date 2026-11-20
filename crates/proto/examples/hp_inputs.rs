@@ -205,6 +205,10 @@ fn return_tx(script: &[u8], v: u64, r_a: &[u8; 32], r_v: &[u8; 32]) -> Vec<u8> {
     t
 }
 
+/// A ground's case: its name, the terms' signing script, the claim,
+/// `request`'s time, the ground, and whether `E` is wrong.
+type Case = (&'static str, Vec<u8>, Claim, u32, Ground, bool);
+
 fn main() -> Result<()> {
     let dir = std::path::PathBuf::from(std::env::args().nth(1).context("usage: hp_inputs <dir>")?);
     std::fs::create_dir_all(&dir)?;
@@ -221,7 +225,7 @@ fn main() -> Result<()> {
 
     // each ground: its terms' script, the claim, `request`'s time, the
     // ground; E right unless `bad_e`
-    let mut cases: Vec<(&str, Vec<u8>, Claim, u32, Ground, bool)> = vec![];
+    let mut cases: Vec<Case> = vec![];
     let cite = |height, index, value| Citation { height, index, vout: 0, value, r_a, r_v };
     let one = |c: Citation| Claim { cited: vec![c] };
     cases.push(("malformed", liquid_script.clone(), one(cite(4_153_000, 1, 50_000)), m_time, Ground::Malformed, true));
