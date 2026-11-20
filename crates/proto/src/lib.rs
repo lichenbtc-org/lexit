@@ -110,8 +110,9 @@ pub fn headers_for(chain: &lichen_chain::Chain, from: &Hash, work: u128) -> Resu
 
 /// The hub's Liquid deployment, as `GET /info` names it: the network, its
 /// policy asset (L-BTC; a regtest chain's own), the federation's block
-/// signing script, the hub's return key and its blinding key (each return
-/// is blinded to it, so the hub unblinds it).
+/// signing script, the hub's return key. (A return is blinded to the
+/// user's contract key, so that she can always open it; the hub learns its
+/// opening from her claim.)
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Deployment {
     pub net: LiquidNet,
@@ -121,7 +122,6 @@ pub struct Deployment {
     pub signblockscript: Vec<u8>,
     #[serde(with = "lichen_babe::hexbytes::fixed")]
     pub hub: Hash,
-    pub hub_blinding: bitcoin::secp256k1::PublicKey,
 }
 
 /// The statement's terms in a setup (`HpSetup::l2`), the hub's: its
@@ -159,7 +159,7 @@ impl SetupTerms {
 }
 
 /// The user's keys (`HpCommit::keys`): her one-time keys for `b` and `E`,
-/// and the key her mint is blinded to.
+/// and the key her mint and her returns are blinded to.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AliceKeys {
     pub b_key: WotsPublic,

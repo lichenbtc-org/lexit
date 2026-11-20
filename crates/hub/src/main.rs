@@ -3,8 +3,8 @@
 //! contracts) and an Elements node (its wallet pays the mints).
 //!
 //! Its secrets are made on first start and kept in `--dir`: the seed of
-//! its contract keys (`seed`), and its Liquid keys (`liquid/liquid.key`,
-//! the returns' key; `liquid/blinding.key`).
+//! its contract keys (`seed`), and its Liquid key (`liquid/liquid.key`,
+//! the returns' key).
 
 use std::path::PathBuf;
 

@@ -19,6 +19,11 @@ clap = { version = "4", features = ["derive"] }
 # outputs (host side only: the guest reads Liquid with
 # lexit-elements)
 elements = "0.27"
+# LWK, the Liquid wallet inside the user's wallet: CT descriptors, coin
+# selection, blinding; fed by our own view of Liquid (Esplora or a node)
+lwk_wollet = { version = "0.20", default-features = false, features = ["esplora", "electrum"] }
+lwk_signer = { version = "0.20", default-features = false }
+lwk_common = "0.20"
 getrandom = "0.2"
 hex = "0.4"
 k256 = { version = "0.13", default-features = false, features = ["alloc", "ecdsa", "schnorr", "expose-field"] }

@@ -10,12 +10,13 @@
 //! her returns of L-BTC to the contract's return address; the dispute's
 //! front ([`front`]).
 //!
-//! What is still to come (docs/PLAN.md): the Liquid wallet itself (LWK):
-//! sweeping the mint, paying a return. Until then a return is paid from
-//! any Liquid wallet and recorded here with its blinding factors
-//! ([`LiquidWallet::record_return`]).
+//! Its L-BTC is an LWK wallet ([`lbtc`]): the mint swept into it
+//! ([`sweep_mint`]), returns paid from it and recorded, opened with the
+//! contract's blinding key ([`pay_return`]). A return paid from another
+//! Liquid wallet can be recorded by hand ([`LiquidWallet::record_return`]).
 
 pub mod front;
+pub mod lbtc;
 
 use anyhow::{bail, ensure, Context, Result};
 use bitcoin::secp256k1::SecretKey;
@@ -51,8 +52,9 @@ pub struct Return {
     pub r_v: String,
 }
 
-/// A mint she holds: the output and its key's secret (hex), hers once the
-/// funding showed `t`.
+/// A mint she holds: the output, its key's secret (hex; the internal key's,
+/// before the tree's tweak), hers once the funding showed `t`, and the
+/// funding's adaptor point (which fixes the tree); whether swept.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Mint {
     pub cid: u32,
@@ -60,6 +62,9 @@ pub struct Mint {
     pub vout: u32,
     pub value: u64,
     pub secret: String,
+    pub point: bitcoin::secp256k1::PublicKey,
+    #[serde(default)]
+    pub swept: Option<String>,
 }
 
 /// An exit's plan: the amount claimed, `E`, and what `request` posts.
@@ -85,6 +90,13 @@ impl ExitPlan {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct LiquidWallet {
     pub deployment: Deployment,
+    /// The L-BTC wallet's mnemonic (LWK's, [`lbtc`]).
+    #[serde(default)]
+    pub mnemonic: String,
+    /// The Liquid height the wallet was made at: a node's scan starts
+    /// there.
+    #[serde(default)]
+    pub birth: u32,
     pub esplora: String,
     /// Instead of the Esplora, a node (tests, or a user who runs one); not
     /// kept in the file.
@@ -94,6 +106,8 @@ pub struct LiquidWallet {
     pub mints: Vec<Mint>,
     #[serde(default)]
     pub returns: Vec<Return>,
+    #[serde(skip)]
+    purse: std::sync::Arc<std::sync::Mutex<Option<lbtc::Purse>>>,
 }
 
 fn info_l2<T: serde::de::DeserializeOwned>(info: &Info, name: &str) -> Result<T> {
@@ -123,6 +137,44 @@ fn secrets_of(w: &Wallet<LiquidWallet>, cid: u32) -> Result<ContractSecrets> {
 }
 
 impl LiquidWallet {
+    /// The L-BTC wallet, opened (and synced) on first use: from the node if
+    /// one is set, else Liquid's Esplora.
+    pub fn purse(&mut self) -> Result<std::sync::MutexGuard<'_, Option<lbtc::Purse>>> {
+        if self.purse.lock().unwrap().is_none() {
+            let view = self.view()?;
+            let d = &self.deployment;
+            let genesis = view.block_hash(0)?.parse()?;
+            let network = lbtc::network(d.net, &d.asset, Some(genesis))?;
+            if self.birth == 0 {
+                self.birth = view.height()?;
+            }
+            let backend = match &self.node {
+                Some(rpc) => lbtc::Backend::Node(lbtc::NodeBackend::new(rpc.clone(), self.birth)),
+                None => lbtc::Backend::Esplora(Box::new(lwk_wollet::blocking::EsploraClient::new(&self.esplora, network)?)),
+            };
+            let p = lbtc::Purse::new(&self.mnemonic, network, backend)?;
+            *self.purse.lock().unwrap() = Some(p);
+        }
+        let mut g = self.purse.lock().unwrap();
+        g.as_mut().unwrap().sync()?;
+        Ok(g)
+    }
+
+    /// The L-BTC held, in sats.
+    pub fn lbtc_balance(&mut self) -> Result<u64> {
+        self.purse()?.as_ref().unwrap().balance()
+    }
+
+    /// An address to receive L-BTC at.
+    pub fn lbtc_address(&mut self) -> Result<elements::Address> {
+        self.purse()?.as_ref().unwrap().address()
+    }
+
+    /// Pay `sats` of L-BTC to `to`: the txid.
+    pub fn lbtc_send(&mut self, to: &elements::Address, sats: u64) -> Result<String> {
+        Ok(self.purse()?.as_mut().unwrap().send(to, sats)?.txid().to_string())
+    }
+
     /// Its view of Liquid.
     pub fn view(&self) -> Result<Box<dyn LiquidView>> {
         if let Some(n) = &self.node {
@@ -181,7 +233,8 @@ impl WalletL2 for LiquidWallet {
     fn create(info: &Info) -> Result<LiquidWallet> {
         let deployment: Deployment = info_l2(info, "liquid")?;
         let esplora = deployment.net.default_esplora().unwrap_or_default().to_string();
-        let w = LiquidWallet { deployment, esplora, node: None, mints: vec![], returns: vec![] };
+        let mnemonic = lbtc::new_mnemonic(lbtc::network(deployment.net, &deployment.asset, None)?)?;
+        let w = LiquidWallet { deployment, mnemonic, birth: 0, esplora, node: None, mints: vec![], returns: vec![], purse: Default::default() };
         w.check_info(info)?;
         Ok(w)
     }
@@ -259,17 +312,28 @@ impl WalletL2 for LiquidWallet {
         Ok(())
     }
     fn minted(w: &mut Wallet<Self>, held: &Held, t: &SecretKey) -> Result<()> {
-        // her mint key's secret (liquid::mint_secret); sweeping it waits
-        // for the Liquid wallet
+        // her mint key's secret (liquid::mint_secret), the mint's output
+        // found by its address; then swept into her L-BTC (if that fails
+        // now, `sweep_mint` later)
         let locked = held.mint.as_ref().context("no mint offered")?;
         let txid = locked.l2.get("mint_txid").and_then(|v| v.as_str()).context("the offer names no mint")?.to_string();
-        let a = w.secrets(&held.nonce).l2();
+        let s = w.secrets(&held.nonce);
+        let a = s.l2();
         ensure!(a.x_only_public_key().0.serialize() == held.record.l2_address, "the contract's L2 address isn't its key's");
         let secret = liquid::mint_secret(&a, t)?;
+        let blinder = bitcoin::secp256k1::PublicKey::from_secret_key(&bitcoin::secp256k1::Secp256k1::signing_only(), &front::blinding(&s));
+        let d = w.l2.deployment.clone();
+        let spk = liquid::mint_address(&held.record.l2_address, &locked.point, &d.hub, &blinder, d.net)?.script_pubkey();
+        let tx: elements::Transaction = elements::encode::deserialize(&w.l2.view()?.tx(&txid_internal(&txid)?)?)?;
+        let vout = tx.output.iter().position(|o| o.script_pubkey == spk).context("the mint's output")? as u32;
         let cid = held.record.cid();
         w.l2.mints.retain(|m| m.cid != cid);
-        w.l2.mints.push(Mint { cid, txid, vout: 0, value: held.record.minted(), secret: hex::encode(secret.secret_bytes()) });
-        w.save()
+        w.l2.mints.push(Mint { cid, txid, vout, value: held.record.minted(), secret: hex::encode(secret.secret_bytes()), point: locked.point, swept: None });
+        w.save()?;
+        if let Err(e) = sweep_mint(w, cid) {
+            w.say(format!("contract {cid}: the mint isn't swept yet ({e:#}); `lexit sweep-mint {cid}` sweeps it"));
+        }
+        Ok(())
     }
 
     fn withdrawal(w: &mut Wallet<Self>, _chain: &Chain, cid: u32, units: u32) -> Result<serde_json::Value> {
@@ -336,5 +400,44 @@ pub fn return_address(w: &LexitWallet, cid: u32) -> Result<elements::Address> {
     let h = w.contracts.iter().find(|h| h.record.cid() == cid).with_context(|| format!("no contract {cid}"))?;
     let k = lexit_proto::keys(&h.record)?;
     let d = &w.l2.deployment;
-    liquid::return_address(&d.hub, &k.terms.d, cid, &d.hub_blinding, d.net)
+    liquid::return_address(&d.hub, &k.terms.d, cid, &k.alice.blinding, d.net)
+}
+
+/// Sweep contract `cid`'s mint into the wallet's L-BTC: its txid.
+pub fn sweep_mint(w: &mut LexitWallet, cid: u32) -> Result<String> {
+    let m = w.l2.mints.iter().find(|m| m.cid == cid).cloned().with_context(|| format!("no mint for contract {cid}"))?;
+    ensure!(m.swept.is_none(), "contract {cid}'s mint is swept already");
+    let h = w.contracts.iter().find(|h| h.record.cid() == cid).cloned().with_context(|| format!("no contract {cid}"))?;
+    let blinding = front::blinding(&w.secrets(&h.nonce));
+    let d = w.l2.deployment.clone();
+    let tx: elements::Transaction = elements::encode::deserialize(&w.l2.view()?.tx(&txid_internal(&m.txid)?)?)?;
+    let (_, _, _, secrets) = lbtc::open(&tx, m.vout, &blinding.secret_bytes(), &liquid::generator(&d.asset))?;
+    let (_, info) = liquid::mint_tree(&h.record.l2_address, &m.point, &d.hub, d.net)?;
+    let secp = elements::secp256k1_zkp::Secp256k1::new();
+    let keypair = elements::secp256k1_zkp::Keypair::from_seckey_slice(&secp, &hex::decode(&m.secret)?)?;
+    let outpoint = elements::OutPoint::new(tx.txid(), m.vout);
+    let swept = w.l2.purse()?.as_mut().unwrap().sweep(outpoint, tx.output[m.vout as usize].clone(), secrets, &keypair, info.merkle_root())?;
+    let txid = swept.txid().to_string();
+    if let Some(x) = w.l2.mints.iter_mut().find(|x| x.cid == cid) {
+        x.swept = Some(txid.clone());
+    }
+    w.save()?;
+    w.say(format!("contract {cid}: the mint swept into the wallet's L-BTC: {txid}"));
+    Ok(txid)
+}
+
+/// Return `sats` of L-BTC for contract `cid`: paid from the wallet's L-BTC
+/// to the contract's return address, opened with the contract's blinding
+/// key, and recorded for its claim.
+pub fn pay_return(w: &mut LexitWallet, cid: u32, sats: u64) -> Result<Return> {
+    let h = w.contracts.iter().find(|h| h.record.cid() == cid).cloned().with_context(|| format!("no contract {cid}"))?;
+    let address = return_address(w, cid)?;
+    let tx = w.l2.purse()?.as_mut().unwrap().send(&address, sats)?;
+    let vout = tx.output.iter().position(|o| o.script_pubkey == address.script_pubkey()).context("the return's output")? as u32;
+    let blinding = front::blinding(&w.secrets(&h.nonce));
+    let (value, r_a, r_v, _) = lbtc::open(&tx, vout, &blinding.secret_bytes(), &liquid::generator(&w.l2.deployment.asset))?;
+    let r = Return { cid, txid: tx.txid().to_string(), vout, value, r_a: hex::encode(r_a), r_v: hex::encode(r_v) };
+    w.l2.record_return(r.clone())?;
+    w.save()?;
+    Ok(r)
 }

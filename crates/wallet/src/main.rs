@@ -71,6 +71,19 @@ enum Cmd {
     /// Contract `contract`'s return address on Liquid: L-BTC paid to it is
     /// paid back in BTC from the contract, up to its cap.
     ReturnAddress { contract: u32 },
+    /// Return `amount` sats of L-BTC for `contract` from this wallet's
+    /// L-BTC: paid to its return address, opened and recorded for its
+    /// claim (then `withdraw` it).
+    Return { contract: u32, amount: u64 },
+    /// The wallet's L-BTC, in sats.
+    BalanceLbtc,
+    /// An address to receive L-BTC at.
+    AddressLbtc,
+    /// Pay `amount` sats of L-BTC to a Liquid address.
+    SendLbtc { to: String, amount: u64 },
+    /// Sweep `contract`'s mint into the wallet's L-BTC (done at the
+    /// opening; this if that failed).
+    SweepMint { contract: u32 },
     /// Record a return you paid (from any Liquid wallet) for `contract`:
     /// its output, value in sats, and blinding factors (hex; zeros for an
     /// explicit output).
@@ -196,6 +209,17 @@ fn main() -> Result<()> {
             }
         }
         Cmd::ReturnAddress { contract } => println!("{}", lexit_wallet::return_address(&w, contract)?),
+        Cmd::Return { contract, amount } => {
+            let r = lexit_wallet::pay_return(&mut w, contract, amount)?;
+            println!("returned {} sats for contract {contract}: {}:{} (recorded; `withdraw` once it confirms)", r.value, r.txid, r.vout);
+        }
+        Cmd::BalanceLbtc => println!("{} sats", w.l2.lbtc_balance()?),
+        Cmd::AddressLbtc => println!("{}", w.l2.lbtc_address()?),
+        Cmd::SendLbtc { ref to, amount } => {
+            let to: elements::Address = to.parse().context("a Liquid address")?;
+            println!("paid: {}", w.l2.lbtc_send(&to, amount)?);
+        }
+        Cmd::SweepMint { contract } => println!("swept: {}", lexit_wallet::sweep_mint(&mut w, contract)?),
         Cmd::RecordReturn { contract, ref txid, vout, value, ref r_a, ref r_v } => {
             w.l2.record_return(Return { cid: contract, txid: txid.clone(), vout, value, r_a: r_a.clone(), r_v: r_v.clone() })?;
             w.save()?;

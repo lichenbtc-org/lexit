@@ -119,6 +119,14 @@ impl ElementsRegtest {
                 "-anyonecanspendaremine=1",
                 "-validatepegin=0",
                 "-fallbackfee=0.0001",
+                // Liquid's relay floor, 0.1 sat/vB (what wallets pay there),
+                // not Bitcoin's 1 sat/vB
+                "-minrelaytxfee=0.000001",
+                "-blockmintxfee=0.000001",
+                // Liquid's discounted size for confidential transactions
+                // (ELIP 200), which wallets (LWK) pay fees by
+                "-acceptdiscountct=1",
+                "-creatediscountct=1",
                 "-acceptnonstdtxn=1",
                 "-debuglogfile=debug.log",
                 &format!("-datadir={}", datadir.display()),

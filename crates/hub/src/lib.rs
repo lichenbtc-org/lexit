@@ -37,9 +37,8 @@ use tiny_http::Method;
 
 pub use lichen_hub::{Config, Hub, OpeningFault};
 
-/// The hub on Liquid: its node, its deployment, its keys there (the return
-/// key's secret, the blinding key's), and each dispute's input once its
-/// claim is found false.
+/// The hub on Liquid: its node, its deployment, its return key's secret,
+/// and each dispute's input once its claim is found false.
 pub struct LiquidHub {
     pub rpc: Rpc,
     pub deployment: Deployment,
@@ -47,7 +46,6 @@ pub struct LiquidHub {
     /// and on the BTC it locks beyond it (the liquidity), for the term.
     pub pricing: lichen_proto::Pricing,
     return_secret: SecretKey,
-    blinding_secret: SecretKey,
     decided: Mutex<HashMap<u32, (String, HubInput)>>,
 }
 
@@ -73,13 +71,11 @@ fn btc(sats: u64) -> String {
 }
 
 impl LiquidHub {
-    /// The hub on `net`, its node at `rpc`, its keys in `dir`
-    /// (`liquid.key`, the return key's secret; `blinding.key`), made on
-    /// first start. The block signing script is the node's tip's.
+    /// The hub on `net`, its node at `rpc`, its return key's secret in
+    /// `dir` (`liquid.key`), made on first start. The block signing script is the node's tip's.
     pub fn open(dir: &Path, net: LiquidNet, rpc: Rpc, pricing: lichen_proto::Pricing) -> Result<LiquidHub> {
         std::fs::create_dir_all(dir)?;
         let return_secret = load_or_create(&dir.join("liquid.key"))?;
-        let blinding_secret = load_or_create(&dir.join("blinding.key"))?;
         let secp = Secp256k1::signing_only();
         let hub = return_secret.x_only_public_key(&secp).0.serialize();
         let signblockscript = liquid::signblockscript(&rpc).context("the node's block signing script")?;
@@ -87,14 +83,13 @@ impl LiquidHub {
         if let Some(a) = net.policy_asset() {
             anyhow::ensure!(a == asset, "the node's policy asset isn't {net:?}'s L-BTC: another chain?");
         }
-        let deployment = Deployment { net, asset, signblockscript, hub, hub_blinding: PublicKey::from_secret_key(&secp, &blinding_secret) };
-        Ok(LiquidHub { rpc, deployment, pricing, return_secret, blinding_secret, decided: Mutex::new(HashMap::new()) })
+        let deployment = Deployment { net, asset, signblockscript, hub };
+        Ok(LiquidHub { rpc, deployment, pricing, return_secret, decided: Mutex::new(HashMap::new()) })
     }
 
-    /// The secrets of contract `c`'s returns: its return key's (spending
-    /// them) and the blinding key (unblinding them).
-    pub fn return_secrets(&self) -> (&SecretKey, &SecretKey) {
-        (&self.return_secret, &self.blinding_secret)
+    /// The secret of the returns' key, before each contract's tweak.
+    pub fn return_secret(&self) -> &SecretKey {
+        &self.return_secret
     }
 
     /// Decide the claim `request` makes: the ground it is false on (the

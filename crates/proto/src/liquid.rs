@@ -268,10 +268,10 @@ pub fn mint_refund_script(hub: &Hash, timeout: u16) -> elements::Script {
         .into_script()
 }
 
-/// The mint's address: Taproot, its internal key the mint key ([`mint_key`],
+/// The mint's Taproot tree: its internal key the mint key ([`mint_key`],
 /// the user's once the funding shows `t`), one leaf the hub's refund
-/// ([`mint_refund_script`]); blinded to the user's key.
-pub fn mint_address(l2_address: &Hash, mint_point: &PublicKey, hub: &Hash, blinder: &PublicKey, net: LiquidNet) -> Result<elements::Address> {
+/// ([`mint_refund_script`]).
+pub fn mint_tree(l2_address: &Hash, mint_point: &PublicKey, hub: &Hash, net: LiquidNet) -> Result<(elements::schnorr::UntweakedPublicKey, elements::taproot::TaprootSpendInfo)> {
     let secp = elements::secp256k1_zkp::Secp256k1::verification_only();
     let p = elements::schnorr::UntweakedPublicKey::from_slice(&mint_key(l2_address, mint_point)?.serialize())?;
     let info = elements::taproot::TaprootBuilder::new()
@@ -279,6 +279,13 @@ pub fn mint_address(l2_address: &Hash, mint_point: &PublicKey, hub: &Hash, blind
         .map_err(|e| anyhow::anyhow!("the refund leaf: {e:?}"))?
         .finalize(&secp, p)
         .map_err(|e| anyhow::anyhow!("the mint's tree: {e:?}"))?;
+    Ok((p, info))
+}
+
+/// The mint's address ([`mint_tree`]), blinded to the user's key.
+pub fn mint_address(l2_address: &Hash, mint_point: &PublicKey, hub: &Hash, blinder: &PublicKey, net: LiquidNet) -> Result<elements::Address> {
+    let secp = elements::secp256k1_zkp::Secp256k1::verification_only();
+    let (p, info) = mint_tree(l2_address, mint_point, hub, net)?;
     let blinder = elements::secp256k1_zkp::PublicKey::from_slice(&blinder.serialize())?;
     Ok(elements::Address::p2tr(&secp, p, info.merkle_root(), Some(blinder), net.address_params()))
 }
@@ -293,11 +300,12 @@ pub fn p2tr_address(key: &XOnlyPublicKey, blinder: Option<&PublicKey>, net: Liqu
 }
 
 /// The address of contract `c`'s returns (`D` its terms' hash): its
-/// return key ([`lexit_statement::return_key`]), blinded to the
-/// hub's blinding key, so the hub unblinds them.
-pub fn return_address(hub: &Hash, d: &Hash, c: u32, hub_blinding: &PublicKey, net: LiquidNet) -> Result<elements::Address> {
+/// return key ([`lexit_statement::return_key`]), blinded to the user's
+/// contract key (`AliceKeys::blinding`): she can always open her returns;
+/// the hub learns their openings from her claim.
+pub fn return_address(hub: &Hash, d: &Hash, c: u32, blinder: &PublicKey, net: LiquidNet) -> Result<elements::Address> {
     let k = lexit_statement::return_key(hub, d, c).context("the hub's key isn't a key")?;
-    p2tr_address(&XOnlyPublicKey::from_slice(&k)?, Some(hub_blinding), net)
+    p2tr_address(&XOnlyPublicKey::from_slice(&k)?, Some(blinder), net)
 }
 
 /// The block signing script of the tip's block: what a hub's terms pin,
