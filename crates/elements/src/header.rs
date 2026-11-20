@@ -65,9 +65,14 @@ pub struct Header<'a> {
 /// The version bit that marks a dynafed header.
 pub const DYNAFED: u32 = 1 << 31;
 
-/// Parse a dynafed header (none for a legacy one, or bytes that aren't a
-/// header).
+/// Parse a dynafed header (none for a legacy one, or bytes that aren't
+/// exactly a header).
 pub fn parse(b: &[u8]) -> Option<Header<'_>> {
+    parse_prefix(b).and_then(|(h, n)| (n == b.len()).then_some(h))
+}
+
+/// Parse the dynafed header a block starts with: it, and its length.
+pub fn parse_prefix(b: &[u8]) -> Option<(Header<'_>, usize)> {
     let mut r = Rd::new(b);
     let version = r.u32()?;
     if version & DYNAFED == 0 {
@@ -81,7 +86,7 @@ pub fn parse(b: &[u8]) -> Option<Header<'_>> {
     let proposed = Params::read(&mut r)?;
     let unsigned = &b[..r.p];
     let witness = r.stack()?;
-    r.done().then_some(Header { version, prev, merkle_root, time, height, current, proposed, witness, unsigned })
+    Some((Header { version, prev, merkle_root, time, height, current, proposed, witness, unsigned }, r.p))
 }
 
 impl Header<'_> {
