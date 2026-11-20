@@ -45,6 +45,9 @@ serde_json = "1"
 signal-hook = { version = "0.3", optional = true }
 tiny_http = { version = "0.12", optional = true }
 ureq = { version = "2", features = ["json"] }
+# one TLS backend chosen at startup: the graph enables two (ring, aws-lc-rs),
+# and rustls then picks neither by itself
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 elements = "0.27"
 # Lexit, this repository's
 lexit-wallet = { path = "../crates/wallet" }

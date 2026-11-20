@@ -3218,6 +3218,7 @@ dependencies = [
  "lichen-proto",
  "lichen-wallet",
  "qrcode",
+ "rustls",
  "serde",
  "serde_json",
  "signal-hook",

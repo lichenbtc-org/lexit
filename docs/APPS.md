@@ -38,6 +38,25 @@ page and wallet either way.
   Bitcoin (the wallet's own payout address: exits, refunds and your
   reserve arrive there; send from it), backup.
 
+## Trying it (testers)
+
+Settings offers **Mutinynet · Liquid testnet**: Lexit's test hub, at
+`https://thimbly.org/lichen/lexit/hub`, its key pinned in the app (a
+wallet is made for it without asking you to check the key). Bitcoin is
+Mutinynet (30-second blocks), Liquid is Liquid testnet; none of it is
+worth anything.
+
+1. Connect to it in Settings. "Your Bitcoin" there shows the wallet's own
+   Mutinynet address: get coins from Mutinynet's faucet
+   (faucet.mutinynet.com) to it.
+2. Open a contract (Home). When the opening asks for the deposit, pay it
+   "from your Bitcoin". Keep the app in front until it's open: your
+   device garbles the dispute setup and uploads part of it to the hub (a
+   few hundred MB). If it stops, "Resume the opening" on Home finishes it.
+3. Your L-BTC is then in the wallet: send it, receive more (Liquid
+   testnet's faucet: liquidtestnet.com/faucet), and Exit to BTC from the
+   contract when you like. The BTC arrives at "Your Bitcoin".
+
 ## Build and use
 
 ```sh
@@ -66,8 +85,11 @@ live in the app's own data directory.
   (platform 35+, build-tools, an NDK), the Tauri CLI (`cargo install
   tauri-cli`) and Rust's `aarch64-linux-android` target. Install with
   `adb install -r`.
-- **Desktop:** `cargo tauri build --bundles app` in `app/`, or `cargo
-  tauri dev`.
+- **Desktop:** `cargo tauri build --bundles app` in `app/` (on a Mac,
+  `target/release/bundle/macos/Lexit.app`, for that Mac's architecture),
+  or `cargo tauri dev`. The app isn't signed by a registered developer:
+  on another Mac, macOS refuses it until you allow it (right-click it,
+  Open; or `xattr -dr com.apple.quarantine Lexit.app`).
 
 An update installs over the app, keeping its wallet, only if signed with
 the same key (`~/.android/debug.keystore` on the machine that built the

@@ -248,10 +248,17 @@ pub struct Preset {
     pub key: Option<&'static str>,
 }
 
-/// The test deployments Lexit runs publicly: none yet (the Mutinynet and
-/// Liquid testnet hub has no public route). "Another hub" takes its URL.
+/// The test deployments Lexit runs (on lichen-hub, behind thimbly.org),
+/// their hub keys pinned: a redeploy changes the key, so update it here.
 pub fn presets() -> Vec<Preset> {
-    vec![]
+    vec![Preset {
+        id: "mutinynet",
+        name: "Mutinynet · Liquid testnet",
+        about: "30-second Bitcoin blocks, 1-minute Liquid blocks; a contract lasts a week",
+        network: Net::Mutinynet,
+        hub: "https://thimbly.org/lichen/lexit/hub",
+        key: Some("bed862d5107ee01cc72aac32f7fa778d1310e4f498cb1c79bca52cb87f640f35"),
+    }]
 }
 
 /// A long operation: one at a time, the wallet held throughout.
@@ -314,6 +321,10 @@ fn liquid_name(l2: &LiquidWallet) -> String {
 
 impl App {
     pub fn new(dir: PathBuf) -> Result<Arc<App>> {
+        // rustls's backend: the dependencies enable both of its own (ring,
+        // aws-lc-rs), so it can't choose, and the first HTTPS request (a
+        // public hub, an Esplora) panicked; already chosen is fine
+        let _ = rustls::crypto::ring::default_provider().install_default();
         std::fs::create_dir_all(dir.join("wallets"))?;
         let saved = match std::fs::read(dir.join("config.json")) {
             Ok(b) => serde_json::from_slice(&b).context("config.json")?,
