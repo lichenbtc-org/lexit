@@ -48,9 +48,13 @@ use tiny_http::Method;
 pub use lichen_hub::{Config, Hub, OpeningFault};
 
 /// Where the hub reads Liquid and keeps its L-BTC's history: an Esplora
-/// (a test deployment), or its own elementsd (production; the tests).
+/// (a test deployment), its wallet synced through it or, lighter, through
+/// a Waterfalls server (a scan in one request); or its own elementsd
+/// (production; the tests).
+#[derive(Clone)]
 pub enum LiquidSource {
     Esplora(String),
+    EsploraWaterfalls { esplora: String, waterfalls: String },
     Node(Rpc),
 }
 
@@ -115,7 +119,7 @@ impl LiquidHub {
         let return_secret = load_or_create(&dir.join("liquid.key"))?;
         let hub = return_secret.x_only_public_key(&Secp256k1::signing_only()).0.serialize();
         let (view, asset): (Box<dyn LiquidView + Send + Sync>, Hash) = match &source {
-            LiquidSource::Esplora(url) => (Box::new(Esplora { url: url.clone() }), net.policy_asset().context("an Esplora hub is on Liquid or its testnet (a regtest chain's asset is its node's)")?),
+            LiquidSource::Esplora(url) | LiquidSource::EsploraWaterfalls { esplora: url, .. } => (Box::new(Esplora { url: url.clone() }), net.policy_asset().context("an Esplora hub is on Liquid or its testnet (a regtest chain's asset is its node's)")?),
             LiquidSource::Node(rpc) => {
                 let asset = liquid::node_policy_asset(rpc)?;
                 if let Some(a) = net.policy_asset() {
@@ -130,6 +134,7 @@ impl LiquidHub {
         let mnemonic = load_or_create_with(&dir.join("mnemonic"), || lbtc::new_mnemonic(network))?;
         let backend = match source {
             LiquidSource::Esplora(url) => lbtc::Backend::Esplora(Box::new(lwk_wollet::blocking::EsploraClient::new(&url, network)?)),
+            LiquidSource::EsploraWaterfalls { waterfalls, .. } => lbtc::Backend::Waterfalls(Box::new(lwk_wollet::blocking::WaterfallsClient::new(&waterfalls, network)?)),
             LiquidSource::Node(rpc) => {
                 let birth: u32 = load_or_create_with(&dir.join("birth"), || Ok(view.height()?.to_string()))?.parse()?;
                 lbtc::Backend::Node(Box::new(lbtc::NodeBackend::new(rpc, birth)))

@@ -190,9 +190,11 @@ impl BlockchainBackend for NodeBackend {
     }
 }
 
-/// Where the purse syncs from: LWK's Esplora client, or a node.
+/// Where the purse syncs from: LWK's Esplora client, its Waterfalls client
+/// (a scan in one request), or a node.
 pub enum Backend {
     Esplora(Box<lwk_wollet::blocking::EsploraClient>),
+    Waterfalls(Box<lwk_wollet::blocking::WaterfallsClient>),
     Node(Box<NodeBackend>),
 }
 
@@ -200,6 +202,7 @@ impl Backend {
     fn full_scan(&mut self, w: &Wollet) -> Result<Option<lwk_wollet::Update>> {
         Ok(match self {
             Backend::Esplora(c) => c.full_scan(w)?,
+            Backend::Waterfalls(c) => c.full_scan(w)?,
             Backend::Node(n) => {
                 // LWK asks scripts' histories before the tip: the index
                 // caught up first
@@ -211,6 +214,7 @@ impl Backend {
     pub fn broadcast(&self, tx: &Transaction) -> Result<Txid> {
         Ok(match self {
             Backend::Esplora(c) => c.broadcast(tx)?,
+            Backend::Waterfalls(c) => c.broadcast(tx)?,
             Backend::Node(n) => n.broadcast(tx)?,
         })
     }

@@ -22,7 +22,7 @@ case "${1:-}" in
     hub)
         while [ ! -f "$cookie" ]; do echo "waiting for $cookie"; sleep 2; done
         export LICHEN_R0=/usr/local/bin/lexit-r0 LICHEN_HP_PROVER=/usr/local/bin/lexit-hp-prover
-        exec lexit-hub --network "$NETWORK" --liquid "${LIQUID:-testnet}" ${LIQUID_ESPLORA:+--liquid-esplora "$LIQUID_ESPLORA"} \
+        exec lexit-hub --network "$NETWORK" --liquid "${LIQUID:-testnet}" ${LIQUID_ESPLORA:+--liquid-esplora "$LIQUID_ESPLORA"} ${LIQUID_WATERFALLS:+--liquid-waterfalls "$LIQUID_WATERFALLS"} \
             --listen 0.0.0.0:18330 --rpc-url "$node" --cookie "$cookie" --chain-wallet hub --dir /hub \
             --statement "${STATEMENT:-hub-proves-mock}" --reserve-ppm "${RESERVE_PPM:-20000}" \
             --deposit-ppm-year "${DEPOSIT_PPM_YEAR:-30000}" --liquidity-ppm-year "${LIQUIDITY_PPM_YEAR:-50000}" --flat-fee "${FLAT_FEE:-0}" \

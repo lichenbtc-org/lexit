@@ -1,6 +1,7 @@
 //! Opt-in (`--ignored`, needs the network): a hub on Liquid testnet with no
-//! node, reading Blockstream's public Esplora. It opens (its keys made,
-//! its LWK wallet synced), names testnet's L-BTC, and takes the
+//! node, reading Blockstream's public Esplora (its LWK wallet synced
+//! through Blockstream's Waterfalls). It opens (its keys made, its wallet
+//! synced), names testnet's L-BTC, and takes the
 //! federation's block signing script from the tip; the tip's header, as
 //! the Esplora serves it, is signed under that script as the statement
 //! checks it, and its transactions are its root's.
@@ -15,7 +16,8 @@ fn a_hub_reads_liquid_testnet_from_its_esplora() {
     let dir = std::env::temp_dir().join(format!("lexit-esplora-testnet-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let url = LiquidNet::Testnet.default_esplora().unwrap().to_string();
-    let hub = LiquidHub::open(&dir, LiquidNet::Testnet, LiquidSource::Esplora(url.clone()), lichen_proto::Pricing::default()).unwrap();
+    let waterfalls = LiquidNet::Testnet.default_waterfalls().unwrap().to_string();
+    let hub = LiquidHub::open(&dir, LiquidNet::Testnet, LiquidSource::EsploraWaterfalls { esplora: url.clone(), waterfalls }, lichen_proto::Pricing::default()).unwrap();
     assert_eq!(Some(hub.deployment.asset), LiquidNet::Testnet.policy_asset());
     assert_eq!(hub.balance().unwrap(), 0, "a new wallet");
     assert!(hub.address().unwrap().is_blinded());

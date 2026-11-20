@@ -38,6 +38,11 @@ struct Args {
     /// Liquid's Esplora (the network's public one by default).
     #[arg(long)]
     liquid_esplora: Option<String>,
+    /// The Waterfalls server its L-BTC wallet syncs through (a scan in one
+    /// request; the network's public one by default); `none`: through the
+    /// Esplora.
+    #[arg(long)]
+    liquid_waterfalls: Option<String>,
     /// Instead of an Esplora: an Elements node's RPC URL and cookie file
     /// (a production hub's own node; a regtest chain's).
     #[arg(long)]
@@ -106,11 +111,27 @@ fn main() -> Result<()> {
     }
     let source = match (a.elements_rpc_url.clone(), a.elements_cookie.clone()) {
         (Some(url), Some(cookie)) => LiquidSource::Node(Rpc { url, cookie, wallet: String::new() }),
-        (None, None) => LiquidSource::Esplora(a.liquid_esplora.clone().or(liquid.default_esplora().map(str::to_string)).context("--liquid-esplora: no public Esplora for this Liquid network")?),
+        (None, None) => {
+            let esplora = a.liquid_esplora.clone().or(liquid.default_esplora().map(str::to_string)).context("--liquid-esplora: no public Esplora for this Liquid network")?;
+            match a.liquid_waterfalls.clone().or(liquid.default_waterfalls().map(str::to_string)) {
+                Some(w) if w != "none" => LiquidSource::EsploraWaterfalls { esplora, waterfalls: w },
+                _ => LiquidSource::Esplora(esplora),
+            }
+        }
         _ => anyhow::bail!("--elements-rpc-url and --elements-cookie go together"),
     };
     let pricing = lichen_proto::Pricing { deposit_ppm_year: a.deposit_ppm_year, liquidity_ppm_year: a.liquidity_ppm_year, flat: a.flat_fee };
-    let mut l2 = LiquidHub::open(&liquid_dir(&a.dir), liquid, source, pricing)?;
+    // a public service may be rate-limiting this box: wait it out, rather
+    // than exit and be restarted at once into the same refusal
+    let mut l2 = loop {
+        match LiquidHub::open(&liquid_dir(&a.dir), liquid, source.clone(), pricing) {
+            Ok(h) => break h,
+            Err(e) => {
+                eprintln!("opening the hub on Liquid: {e:#}; again in a minute");
+                std::thread::sleep(std::time::Duration::from_secs(60));
+            }
+        }
+    };
     l2.float_warn = a.float_warn;
     l2.chores_every = std::time::Duration::from_secs(a.chores_every);
     l2.sync_every = std::time::Duration::from_secs(a.sync_every);

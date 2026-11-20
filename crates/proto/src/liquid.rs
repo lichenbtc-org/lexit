@@ -41,6 +41,15 @@ impl LiquidNet {
             LiquidNet::Regtest => None,
         }
     }
+    /// Its public Waterfalls server (Blockstream's, for LWK: a wallet's
+    /// whole scan in one request, where an Esplora takes dozens), if any.
+    pub fn default_waterfalls(self) -> Option<&'static str> {
+        match self {
+            LiquidNet::Liquid => Some("https://waterfalls.liquidwebwallet.org/liquid/api"),
+            LiquidNet::Testnet => Some("https://waterfalls.liquidwebwallet.org/liquidtestnet/api"),
+            LiquidNet::Regtest => None,
+        }
+    }
     /// Its public Esplora, if any.
     pub fn default_esplora(self) -> Option<&'static str> {
         match self {
@@ -183,9 +192,17 @@ pub struct Esplora {
 }
 
 impl Esplora {
+    /// A GET, retried on 429 (a public Esplora rate-limits) after 2, 5,
+    /// then 15 seconds.
     fn get(&self, path: &str) -> Result<String> {
         let url = format!("{}/{path}", self.url.trim_end_matches('/'));
-        Ok(ureq::get(&url).timeout(std::time::Duration::from_secs(30)).call().with_context(|| format!("GET {url}"))?.into_string()?)
+        for wait in [2, 5, 15, 0] {
+            match ureq::get(&url).timeout(std::time::Duration::from_secs(30)).call() {
+                Err(ureq::Error::Status(429, _)) if wait > 0 => std::thread::sleep(std::time::Duration::from_secs(wait)),
+                r => return Ok(r.with_context(|| format!("GET {url}"))?.into_string()?),
+            }
+        }
+        unreachable!()
     }
     /// Broadcast a transaction (hex): its txid.
     pub fn broadcast(&self, tx: &[u8]) -> Result<String> {
