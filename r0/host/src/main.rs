@@ -1,9 +1,10 @@
 //! `lexit-r0`: proves Lexit's guest, the hub's statement.
 //!
-//! - `hp <hub input> <out>`: prove the hub's statement
+//! - `hp <hub input> <out> [<packed guest>]`: prove the hub's statement
 //!   (`lexit_statement::check`), on its input
 //!   (its bytes, `Input::to_bytes`); writes the succinct receipt;
-//!   `exec-hp <hub input>` runs the guest without proving (its cycles);
+//!   `exec-hp <hub input> [<packed guest>]` runs the guest without proving
+//!   (its cycles), the committed one or another build;
 //! - `wrap <receipt> <out>`: the Groth16 receipt of a succinct receipt of
 //!   the hub's statement (x86 Linux with Docker: RISC Zero's gnark step);
 //! - `hp-proof <hub input> <out>`: `hp` then `wrap`, writing the Groth16
@@ -67,10 +68,21 @@ fn hp_input(input: &str) -> Result<Hp> {
     Ok(Hp { bytes, journal: journal.to_vec() })
 }
 
+/// Bytes as the guest reads them: little-endian words, zero-padded
+/// (vlichen's).
+fn words(bytes: &[u8]) -> Vec<u32> {
+    let mut padded = bytes.to_vec();
+    padded.resize(bytes.len().div_ceil(4) * 4, 0);
+    padded.chunks(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect()
+}
+
 /// Prove the hub's statement (or, `execute_only`, run it): the succinct
 /// receipt, checked.
 fn prove_hp(hp: Hp, execute_only: bool) -> Result<Option<Receipt>> {
-    let guest = committed("hp")?;
+    prove_hp_with(hp, execute_only, committed("hp")?)
+}
+
+fn prove_hp_with(hp: Hp, execute_only: bool, guest: Vec<u8>) -> Result<Option<Receipt>> {
     let id = image_id(&guest)?;
     let mut env = ExecutorEnv::builder();
     env.write(&(hp.bytes.len() as u32))?.write_slice(&words(&hp.bytes));
@@ -125,7 +137,14 @@ fn main() -> Result<()> {
             let r = prove_hp(hp_input(input)?, false)?.context("a receipt")?;
             write(out, &bincode::serialize(&r)?)
         }
+        ["hp", input, out, guest] => {
+            let r = prove_hp_with(hp_input(input)?, false, read(guest)?)?.context("a receipt")?;
+            write(out, &bincode::serialize(&r)?)
+        }
         ["exec-hp", input] => prove_hp(hp_input(input)?, true).map(|_| ()),
+        // another build of the guest (packed): a native, unreproducible
+        // build, for its cycles
+        ["exec-hp", input, guest] => prove_hp_with(hp_input(input)?, true, read(guest)?).map(|_| ()),
         ["wrap", receipt, out] => write(out, &bincode::serialize(&wrap(&load(receipt)?)?)?),
         ["hp-proof", input, out] => {
             let r = prove_hp(hp_input(input)?, false)?.context("a receipt")?;
@@ -153,6 +172,6 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
-        _ => bail!("usage: lexit-r0 hp <hub input> <out> | exec-hp <hub input> | wrap <receipt> <out> | hp-proof <hub input> <out> | pack <guest ELF> <out> | pack-id <bin> | image-id | check-id"),
+        _ => bail!("usage: lexit-r0 hp <hub input> <out> [<packed guest>] | exec-hp <hub input> [<packed guest>] | wrap <receipt> <out> | hp-proof <hub input> <out> | pack <guest ELF> <out> | pack-id <bin> | image-id | check-id"),
     }
 }
