@@ -47,6 +47,13 @@ struct Args {
     /// Warn when the hub's L-BTC falls below this, in sats.
     #[arg(long, default_value_t = 1_000_000)]
     float_warn: u64,
+    /// Seconds between the hub's chores (refunds, sweeps, the float), and
+    /// the most its L-BTC wallet may lag Liquid: a sync is a full scan, and a
+    /// public Esplora rate-limits.
+    #[arg(long, default_value_t = 300)]
+    chores_every: u64,
+    #[arg(long, default_value_t = 60)]
+    sync_every: u64,
     /// The hub's statement: `hub-proves-mock` (a proof of a toy circuit,
     /// for trials) or `hub-proves` (its guest, not built yet).
     #[arg(long, default_value = "hub-proves-mock")]
@@ -105,6 +112,8 @@ fn main() -> Result<()> {
     let pricing = lichen_proto::Pricing { deposit_ppm_year: a.deposit_ppm_year, liquidity_ppm_year: a.liquidity_ppm_year, flat: a.flat_fee };
     let mut l2 = LiquidHub::open(&liquid_dir(&a.dir), liquid, source, pricing)?;
     l2.float_warn = a.float_warn;
+    l2.chores_every = std::time::Duration::from_secs(a.chores_every);
+    l2.sync_every = std::time::Duration::from_secs(a.sync_every);
     println!("the hub's L-BTC: {} sats; fund it at {}", l2.balance()?, l2.address()?);
     let hub = Hub::start(
         Config {

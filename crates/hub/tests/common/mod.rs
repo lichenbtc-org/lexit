@@ -146,6 +146,7 @@ impl Env {
         let node = Rpc { wallet: String::new(), ..self.el.rpc.clone() };
         let mut l2 = LiquidHub::open(&cfg.dir.join("liquid"), LiquidNet::Regtest, LiquidSource::Node(node), lichen_proto::Pricing::default()).unwrap();
         l2.chores_every = Duration::from_secs(1);
+        l2.sync_every = Duration::ZERO;
         if lbtc > 0 {
             let address = l2.address().unwrap().to_string();
             let txid = self.el.rpc.wallet_call("sendtoaddress", serde_json::json!([address, btc(lbtc)])).unwrap();

@@ -70,10 +70,14 @@ pub struct LiquidHub {
     return_secret: SecretKey,
     genesis: elements::BlockHash,
     decided: Mutex<HashMap<u32, (String, HubInput)>>,
-    /// How often its chores run, and below what float it warns.
+    /// How often its chores run, how stale its L-BTC wallet may be (a sync
+    /// is a full scan: dozens of requests to an Esplora, which a public one
+    /// rate-limits), and below what float it warns.
     pub chores_every: Duration,
+    pub sync_every: Duration,
     pub float_warn: u64,
     last_chores: Mutex<Option<Instant>>,
+    last_sync: Mutex<Option<Instant>>,
 }
 
 /// A dispute's front at the hub: `request` confirmed at `at`; `holds` once
@@ -143,24 +147,35 @@ impl LiquidHub {
             return_secret,
             genesis,
             decided: Mutex::new(HashMap::new()),
-            chores_every: Duration::from_secs(30),
+            chores_every: Duration::from_secs(300),
+            sync_every: Duration::from_secs(60),
             float_warn: 1_000_000,
             last_chores: Mutex::new(None),
+            last_sync: Mutex::new(Some(Instant::now())),
         })
+    }
+
+    /// The hub's L-BTC wallet, synced if staler than `sync_every` (its own
+    /// payments it applies as it makes them, so between syncs it misses
+    /// only what it is paid).
+    fn purse(&self) -> Result<std::sync::MutexGuard<'_, Purse>> {
+        let mut p = self.purse.lock().unwrap();
+        let mut last = self.last_sync.lock().unwrap();
+        if last.is_none_or(|t| t.elapsed() >= self.sync_every) {
+            p.sync()?;
+            *last = Some(Instant::now());
+        }
+        Ok(p)
     }
 
     /// An address to fund the hub's L-BTC at.
     pub fn address(&self) -> Result<elements::Address> {
-        let mut p = self.purse.lock().unwrap();
-        p.sync()?;
-        p.address()
+        self.purse()?.address()
     }
 
     /// The hub's L-BTC, in sats.
     pub fn balance(&self) -> Result<u64> {
-        let mut p = self.purse.lock().unwrap();
-        p.sync()?;
-        p.balance()
+        self.purse()?.balance()
     }
 
     /// The key the hub blinds contract `cid`'s mint to: its own, so that it
@@ -211,8 +226,7 @@ impl LiquidHub {
                 continue;
             }
             let tx = self.tx(&m.opening.txid)?;
-            let mut purse = self.purse.lock().unwrap();
-            purse.sync()?;
+            let purse = self.purse()?;
             let to = purse.address()?;
             let refund = liquid::refund_tx(&tx, m.opening.vout, m.opening.secrets(&self.deployment.asset)?, &m.l2_address, &m.point, &self.return_secret, self.deployment.net, &to, 1_000, self.genesis)?;
             purse.backend.broadcast(&refund)?;
@@ -255,9 +269,7 @@ impl LiquidHub {
                 let secrets = liquid::secrets_of(&o, &self.deployment.asset, r.value, &hash32(&r.r_a)?, &hash32(&r.r_v)?)?;
                 inputs.push((elements::OutPoint::new(tx.txid(), r.vout), o, secrets, keypair));
             }
-            let mut purse = self.purse.lock().unwrap();
-            purse.sync()?;
-            let swept = purse.sweep(inputs)?;
+            let swept = self.purse()?.sweep(inputs)?;
             ctx.note(format!("contract {}: its returns swept into the hub's L-BTC: {}", c.cid, swept.txid()));
             c.swept = Some(swept.txid().to_string());
             files::write_atomic(&path, &serde_json::to_vec_pretty(&c)?)?;
@@ -422,11 +434,7 @@ impl HubL2 for LiquidHub {
         let blinder = PublicKey::from_secret_key(&Secp256k1::signing_only(), &blinding);
         let d = &self.deployment;
         let address = liquid::mint_address(&record.l2_address, mint_point, &d.hub, &blinder, d.net)?;
-        let tx = {
-            let mut purse = self.purse.lock().unwrap();
-            purse.sync()?;
-            purse.send(&address, sats)?
-        };
+        let tx = self.purse()?.send(&address, sats)?;
         let vout = tx.output.iter().position(|o| o.script_pubkey == address.script_pubkey()).context("the mint's output")? as u32;
         let (value, _, _, secrets) = lbtc::open(&tx, vout, &blinding.secret_bytes(), &liquid::generator(&d.asset))?;
         let opening = MintOpening { txid: tx.txid().to_string(), vout, value, asset_bf: secrets.asset_bf.to_string(), value_bf: secrets.value_bf.to_string() };
