@@ -2,7 +2,7 @@
 # A smoke test of a running deployment, from the box: a user's wallet, as
 # one-off containers on the deployment's compose network, its BTC a wallet
 # `smoke` of the deployment's node, its L-BTC read from LIQUID_ESPLORA.
-#   deploy/smoke.sh fund               an address to pay the smoke wallet's BTC at
+#   deploy/smoke.sh fund               an address to pay the smoke wallet's BTC at (the node's wallet `smoke`)
 #   deploy/smoke.sh open [D] [L]       open a contract (D sats in, L of liquidity), the deposit paid from it
 #   deploy/smoke.sh status             its contracts and its L-BTC
 #   deploy/smoke.sh return <c> <sats>  return L-BTC for contract c
@@ -27,7 +27,11 @@ lexit() {
 }
 [ -f "$data/smoke/smoke.json" ] || lexit init
 case "${1:-}" in
-    fund) lexit payout ;;
+    fund)
+        cli() { dc exec -T bitcoind bitcoin-cli -datadir=/data "$@"; }
+        cli createwallet smoke >/dev/null 2>&1 || cli loadwallet smoke >/dev/null 2>&1 || true
+        echo "pay the smoke wallet's BTC at $(cli -rpcwallet=smoke getnewaddress); it has $(cli -rpcwallet=smoke getbalance) BTC"
+        ;;
     open) lexit open "${2:-50000}" --liquidity "${3:-100000}" --reserve 10000 --pay ;;
     status) lexit contracts; lexit balance-lbtc ;;
     return) lexit return "${2:?contract}" "${3:?sats}" ;;
