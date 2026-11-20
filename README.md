@@ -6,6 +6,11 @@ contract on Bitcoin guarantees your way back out to BTC, up to your cap,
 until the contract's end. No swap provider or peg-out whitelist is
 involved, and you don't have to trust the hub to honour it.
 
+## Boilerplate warning:
+
+Under no circumstances should you use this with real money yet!
+Code is LLM generated and needs thorough auditing, first.
+
 ## How it works
 
 - **Opening** is one atomic swap. You pay `D` BTC into a contract on
